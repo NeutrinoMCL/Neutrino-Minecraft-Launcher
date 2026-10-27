@@ -11,6 +11,16 @@ use wgpu::util::DeviceExt;
 const TEXTURE_SIZE: u32 = 512;
 /// 拖动一个像素对应的弧度。
 const DRAG_SENSITIVITY: f32 = 0.01;
+/// 披风自然下垂时向外倾斜的角度。
+const CAPE_TILT: f32 = 20.0 * std::f32::consts::PI / 180.0;
+/// 滚轮缩放的上下限，避免把模型放大到穿模或缩成一个小点。
+const MIN_ZOOM: f32 = 0.30;
+const MAX_ZOOM: f32 = 1.80;
+
+fn apply_zoom(zoom: f32, delta: f32) -> f32 {
+    // Slint 的 delta-y 正数对应滚轮前推：前推放大（相机拉近）。
+    (zoom - delta * 0.001).clamp(MIN_ZOOM, MAX_ZOOM)
+}
 /// 俯仰限制：最多转到头朝外（+90°）或脚朝外（-90°）。
 const MAX_PITCH: f32 = std::f32::consts::FRAC_PI_2;
 
@@ -36,14 +46,21 @@ pub struct Preview3d {
     queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
+    skin_bind_group: wgpu::BindGroup,
+    /// 披风纹理和网格都是可选的；没有自定义披风时不绘制。
+    cape_bind_group: Option<wgpu::BindGroup>,
     sampler: wgpu::Sampler,
     uniforms: wgpu::Buffer,
     vertices: Option<wgpu::Buffer>,
     indices: Option<wgpu::Buffer>,
     index_count: u32,
-    /// 皮肤纹理要一直持有，否则 bind group 会引用已释放的资源。
+    cape_vertices: Option<wgpu::Buffer>,
+    cape_indices: Option<wgpu::Buffer>,
+    cape_index_count: u32,
+    cape_enabled: bool,
+    /// 皮肤 / 披风纹理要一直持有，否则 bind group 会引用已释放的资源。
     _skin_texture: Option<wgpu::Texture>,
+    _cape_texture: Option<wgpu::Texture>,
     color_texture: wgpu::Texture,
     color_view: wgpu::TextureView,
     depth_view: wgpu::TextureView,
@@ -51,6 +68,8 @@ pub struct Preview3d {
     yaw: f32,
     /// 俯仰角，限制在 ±90°：立正姿势最多转到头朝外或脚朝外。
     pitch: f32,
+    /// 相机距离缩放：1.0 为默认，越小越近。
+    zoom: f32,
     /// 浅色主题下用白色背景。
     light_background: bool,
     /// 上一次的拖动偏移（相对按下点的绝对偏移）。
@@ -114,8 +133,8 @@ impl Preview3d {
             ..Default::default()
         });
 
-        let placeholder = create_skin_texture(&device, &queue, 1, 1, &[255, 255, 255, 255]);
-        let bind_group = create_bind_group(
+        let placeholder = create_texture(&device, &queue, 1, 1, &[255, 255, 255, 255]);
+        let skin_bind_group = create_bind_group(
             &device,
             &bind_group_layout,
             &uniforms,
@@ -213,19 +232,26 @@ impl Preview3d {
             queue,
             pipeline,
             bind_group_layout,
-            bind_group,
+            skin_bind_group,
+            cape_bind_group: None,
             sampler,
             uniforms,
             vertices: None,
             indices: None,
             index_count: 0,
+            cape_vertices: None,
+            cape_indices: None,
+            cape_index_count: 0,
+            cape_enabled: false,
             _skin_texture: Some(placeholder),
+            _cape_texture: None,
             color_texture,
             color_view,
             depth_view,
             // 稍微转一点，露出正面和侧面
             yaw: 0.35,
             pitch: 0.0,
+            zoom: 1.0,
             light_background: false,
             last_offset: (0.0, 0.0),
         }
@@ -243,8 +269,8 @@ impl Preview3d {
         };
 
         let (width, height) = skin.dimensions();
-        let texture = create_skin_texture(&self.device, &self.queue, width, height, skin.as_raw());
-        self.bind_group = create_bind_group(
+        let texture = create_texture(&self.device, &self.queue, width, height, skin.as_raw());
+        self.skin_bind_group = create_bind_group(
             &self.device,
             &self.bind_group_layout,
             &self.uniforms,
@@ -272,6 +298,57 @@ impl Preview3d {
         true
     }
 
+    /// 设置自定义披风并重建网格；返回 `false` 表示不是合法的披风模板。
+    pub fn set_cape(&mut self, cape: &RgbaImage) -> bool {
+        let Some((vertices, indices)) = build_cape(cape) else {
+            return false;
+        };
+
+        let (width, height) = cape.dimensions();
+        let texture = create_texture(&self.device, &self.queue, width, height, cape.as_raw());
+        let bind_group = create_bind_group(
+            &self.device,
+            &self.bind_group_layout,
+            &self.uniforms,
+            &texture,
+            &self.sampler,
+        );
+        self.cape_vertices = Some(self.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("preview3d.cape-vertices"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        ));
+        self.cape_indices = Some(self.device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("preview3d.cape-indices"),
+                contents: bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsages::INDEX,
+            },
+        ));
+        self.cape_index_count = indices.len() as u32;
+        self.cape_bind_group = Some(bind_group);
+        self._cape_texture = Some(texture);
+        self.cape_enabled = true;
+        true
+    }
+
+    /// 移除披风并停止绘制。
+    pub fn clear_cape(&mut self) {
+        self.cape_vertices = None;
+        self.cape_indices = None;
+        self.cape_index_count = 0;
+        self.cape_bind_group = None;
+        self._cape_texture = None;
+        self.cape_enabled = false;
+    }
+
+    /// 开启 / 关闭披风绘制；没有披风网格时会保持关闭。
+    pub fn set_cape_visible(&mut self, visible: bool) {
+        self.cape_enabled = visible && self.cape_index_count > 0;
+    }
+
     /// 开始一次拖拽：偏移量从 0 重新算起。
     pub fn begin_drag(&mut self) {
         self.last_offset = (0.0, 0.0);
@@ -292,9 +369,18 @@ impl Preview3d {
         self.pitch = (self.pitch + step_y * DRAG_SENSITIVITY).clamp(-MAX_PITCH, MAX_PITCH);
     }
 
+    /// 滚轮缩放：`delta` 是 Slint 的滚轮 delta-y，正数（前推）拉近。
+    pub fn zoom_by(&mut self, delta: f32) {
+        self.zoom = apply_zoom(self.zoom, delta);
+    }
+
     pub fn render(&mut self) {
         let projection = perspective(32f32.to_radians(), 1.0, 0.1, 500.0);
-        let view = look_at([0.0, 9.0, 78.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0]);
+        let view = look_at(
+            [0.0, 9.0 * self.zoom, 78.0 * self.zoom],
+            [0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        );
 
         // 先水平转（绕世界 Y），再俯仰（绕世界 X），俯仰角已经被限制住
         let model = mul(rotate_x(self.pitch), rotate_y(self.yaw));
@@ -353,10 +439,23 @@ impl Preview3d {
 
             if let (Some(vertices), Some(indices)) = (&self.vertices, &self.indices) {
                 pass.set_pipeline(&self.pipeline);
-                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.set_bind_group(0, &self.skin_bind_group, &[]);
                 pass.set_vertex_buffer(0, vertices.slice(..));
                 pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..self.index_count, 0, 0..1);
+            }
+
+            if self.cape_enabled
+                && let (Some(vertices), Some(indices), Some(bind_group)) = (
+                    &self.cape_vertices,
+                    &self.cape_indices,
+                    &self.cape_bind_group,
+                )
+            {
+                pass.set_bind_group(0, bind_group, &[]);
+                pass.set_vertex_buffer(0, vertices.slice(..));
+                pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint16);
+                pass.draw_indexed(0..self.cape_index_count, 0, 0..1);
             }
         }
 
@@ -364,7 +463,7 @@ impl Preview3d {
     }
 }
 
-fn create_skin_texture(
+fn create_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     width: u32,
@@ -372,7 +471,7 @@ fn create_skin_texture(
     rgba: &[u8],
 ) -> wgpu::Texture {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("preview3d.skin"),
+        label: Some("preview3d.texture"),
         size: wgpu::Extent3d {
             width,
             height,
@@ -568,6 +667,141 @@ fn build_skin(skin: &RgbaImage) -> Option<(Vec<Vertex>, Vec<u16>)> {
     }
 
     Some((vertices, indices))
+}
+
+/// 从 64×32 / 128×64 的披风模板生成带厚度的网格。
+///
+/// 采用标准模板布局（正面 / 背面 / 左右侧条 / 上下边条），模型尺寸为
+/// 10×16×1，挂在肩膀下方、身体后方。
+fn build_cape(cape: &RgbaImage) -> Option<(Vec<Vertex>, Vec<u16>)> {
+    let (width, height) = cape.dimensions();
+    if width < 64 || width % 64 != 0 || height != width / 2 {
+        return None;
+    }
+
+    let scale = (width / 64) as f32;
+    let uv_scale = [1.0 / width as f32, 1.0 / height as f32];
+    // 标准 64×32 披风模板：正面 (1,1)-(10,16)，背面 (12,1)-(21,16)，
+    // 左右侧条 (0,1) / (11,1)，上下边条 (1,0) / (11,0)。HD 模板按 2× 缩放。
+    let front = [scale, scale, 10.0 * scale, 16.0 * scale];
+    let back = [12.0 * scale, scale, 10.0 * scale, 16.0 * scale];
+    let right = [0.0, scale, scale, 16.0 * scale];
+    let left = [11.0 * scale, scale, scale, 16.0 * scale];
+    let top = [scale, 0.0, 10.0 * scale, scale];
+    let bottom = [11.0 * scale, 0.0, 10.0 * scale, scale];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    // 背面（朝 -Z，从身后看）
+    push_face(
+        &mut vertices,
+        &mut indices,
+        uv_scale,
+        back,
+        [0.0, 0.0, -3.4],
+        [0.0, 0.0, -1.0],
+        [-1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        10.0,
+        16.0,
+        false,
+    );
+    // 正面（朝 +Z，披风内侧）
+    push_face(
+        &mut vertices,
+        &mut indices,
+        uv_scale,
+        front,
+        [0.0, 0.0, -2.4],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        10.0,
+        16.0,
+        false,
+    );
+
+    // 四个侧面把前后两层连成一个有厚度的薄盒。
+    let edge_z = -2.9;
+    let thickness = 1.0;
+    // 左侧（-X）
+    push_face(
+        &mut vertices,
+        &mut indices,
+        uv_scale,
+        left,
+        [-5.0, 0.0, edge_z],
+        [-1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, -1.0, 0.0],
+        thickness,
+        16.0,
+        false,
+    );
+    // 右侧（+X）
+    push_face(
+        &mut vertices,
+        &mut indices,
+        uv_scale,
+        right,
+        [5.0, 0.0, edge_z],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+        [0.0, -1.0, 0.0],
+        thickness,
+        16.0,
+        false,
+    );
+    // 顶部（+Y）
+    push_face(
+        &mut vertices,
+        &mut indices,
+        uv_scale,
+        top,
+        [0.0, 8.0, edge_z],
+        [0.0, 1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        10.0,
+        thickness,
+        false,
+    );
+    // 底部（-Y）
+    push_face(
+        &mut vertices,
+        &mut indices,
+        uv_scale,
+        bottom,
+        [0.0, -8.0, edge_z],
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0],
+        10.0,
+        thickness,
+        false,
+    );
+
+    tilt_cape(&mut vertices);
+    Some((vertices, indices))
+}
+
+/// 让披风以肩膀为轴向外倾斜，而不是垂直贴在后背上。
+fn tilt_cape(vertices: &mut [Vertex]) {
+    let (sin, cos) = CAPE_TILT.sin_cos();
+    let pivot_y = 8.0;
+    let pivot_z = -2.9;
+
+    for vertex in vertices {
+        let dy = vertex.position[1] - pivot_y;
+        let dz = vertex.position[2] - pivot_z;
+        vertex.position[1] = pivot_y + dy * cos - dz * sin;
+        vertex.position[2] = pivot_z + dy * sin + dz * cos;
+
+        let normal_y = vertex.normal[1];
+        let normal_z = vertex.normal[2];
+        vertex.normal[1] = normal_y * cos - normal_z * sin;
+        vertex.normal[2] = normal_y * sin + normal_z * cos;
+    }
 }
 
 fn push_box(
@@ -868,6 +1102,50 @@ mod tests {
     }
 
     #[test]
+    fn cape_mesh_is_closed_and_outward() {
+        let (vertices, indices) = build_cape(&skin(64, 32)).expect("64x32 是合法披风");
+
+        // 前后两面 + 四个侧面，每个面 4 个顶点、2 个三角形
+        assert_eq!(vertices.len(), 24);
+        assert_eq!(indices.len(), 36);
+
+        let min_z = vertices
+            .iter()
+            .map(|vertex| vertex.position[2])
+            .fold(f32::MAX, f32::min);
+        assert!(min_z < -7.0, "披风底部应该向外倾斜");
+
+        for triangle in indices.chunks(3) {
+            let a = vertices[triangle[0] as usize];
+            let b = vertices[triangle[1] as usize];
+            let c = vertices[triangle[2] as usize];
+
+            let edge1 = sub(b.position, a.position);
+            let edge2 = sub(c.position, a.position);
+            let facing = dot(cross(edge1, edge2), a.normal);
+            assert!(facing > 0.0, "披风三角形绕向和法线不一致");
+        }
+    }
+
+    #[test]
+    fn rejects_images_that_are_not_cape_templates() {
+        assert!(build_cape(&skin(64, 64)).is_none());
+        assert!(build_cape(&skin(32, 16)).is_none());
+        assert!(build_cape(&skin(128, 64)).is_some());
+    }
+
+    #[test]
+    fn cape_uv_stays_inside_the_texture() {
+        for (width, height) in [(64, 32), (128, 64)] {
+            let (vertices, _) = build_cape(&skin(width, height)).expect("合法披风");
+            for vertex in vertices {
+                assert!((0.0..=1.0).contains(&vertex.uv[0]));
+                assert!((0.0..=1.0).contains(&vertex.uv[1]));
+            }
+        }
+    }
+
+    #[test]
     fn skin_uv_stays_inside_the_texture() {
         for (width, height) in [(64, 64), (64, 32), (128, 128)] {
             let (vertices, _) = build_skin(&skin(width, height)).expect("合法皮肤");
@@ -932,6 +1210,23 @@ mod tests {
 
         assert!((hat_max_y - 16.5).abs() < 1e-4);
         assert!((hat_max_x - 8.25).abs() < 1e-4, "手臂外层最宽到 8.25");
+    }
+
+    #[test]
+    fn zoom_is_limited() {
+        let mut zoom = 1.0;
+        for _ in 0..100 {
+            zoom = apply_zoom(zoom, 100.0);
+        }
+        assert!((zoom - MIN_ZOOM).abs() < 1e-6);
+
+        for _ in 0..100 {
+            zoom = apply_zoom(zoom, -100.0);
+        }
+        assert!((zoom - MAX_ZOOM).abs() < 1e-6);
+
+        assert!(apply_zoom(1.0, 10.0) < 1.0);
+        assert!(apply_zoom(1.0, -10.0) > 1.0);
     }
 
     #[test]

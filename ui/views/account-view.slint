@@ -350,6 +350,7 @@ component SkinOptionRow inherits Rectangle {
 
 component SkinDialog inherits Rectangle {
   in property <string> account;
+  in-out property <string> cape-message: "";
 
   callback cancel();
 
@@ -357,7 +358,7 @@ component SkinDialog inherits Rectangle {
 
   ModalCard {
     card-width: 640px;
-    card-height: 440px;
+    card-height: 520px;
     close => {
       root.cancel();
     }
@@ -408,7 +409,7 @@ component SkinDialog inherits Rectangle {
           }
 
           Text {
-            text: "拖动旋转";
+            text: "拖动旋转 · 滚轮缩放";
             width: 100%;
             y: parent.height - self.height - 10px;
             horizontal-alignment: center;
@@ -428,6 +429,11 @@ component SkinDialog inherits Rectangle {
             moved => {
               Actions.preview-orbit(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
             }
+
+            scroll-event(event) => {
+              Actions.zoom-preview(event.delta-y);
+              return accept;
+            }
           }
         }
 
@@ -436,7 +442,7 @@ component SkinDialog inherits Rectangle {
         Rectangle {
           horizontal-stretch: 1;
           vertical-stretch: 0;
-          height: 132px;
+          height: 212px;
           background: transparent;
 
           for account in AppState.accounts : VerticalLayout {
@@ -473,13 +479,71 @@ component SkinDialog inherits Rectangle {
                 Actions.preview-skin(root.account, Palette.background.red > 128);
               }
             }
+
+            if account.kind == AccountKind.offline : SkinOptionRow {
+              label: "自定义披风";
+              selected: account.has-cape;
+              clicked => {
+                root.cape-message = Actions.choose-custom-cape(root.account);
+                Actions.preview-skin(root.account, Palette.background.red > 128);
+              }
+            }
+
+            if account.kind == AccountKind.offline : HorizontalLayout {
+              height: 28px;
+              spacing: 8px;
+              cross-axis-alignment: center;
+
+              Text {
+                text: account.has-cape ? "显示披风" : "未设置披风";
+                color: Palette.foreground.with-alpha(account.has-cape ? 0.75 : 0.4);
+                font-size: 12px;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+              }
+
+              if account.has-cape : Rectangle {
+                width: 28px;
+                height: 28px;
+                border-radius: 4px;
+                background: cape-touch.has-hover
+                  ? Palette.foreground.with-alpha(0.06)
+                  : transparent;
+
+                Image {
+                  source: account.cape-enabled
+                    ? @image-url("../images/icons/toggle-on.svg")
+                    : @image-url("../images/icons/toggle-off.svg");
+                  width: 18px;
+                  height: 18px;
+                  colorize: account.cape-enabled
+                    ? Palette.accent-background
+                    : Palette.foreground.with-alpha(0.45);
+                }
+
+                cape-touch := TouchArea {
+                  mouse-cursor: pointer;
+                  clicked => {
+                    Actions.set-cape-enabled(root.account, !account.cape-enabled);
+                    Actions.preview-skin(root.account, Palette.background.red > 128);
+                  }
+                }
+              }
+            }
           }
         }
       }
 
       Text {
-        text: "自定义皮肤请选择 64×64 或 128×128 的 PNG 文件。";
+        text: "自定义皮肤请选择 64×64 或 128×128 的 PNG 文件；披风请选择 64×32 或 128×64 的 PNG 模板。";
         color: Palette.foreground.with-alpha(0.5);
+        font-size: 11px;
+        wrap: word-wrap;
+      }
+
+      if root.cape-message != "" : Text {
+        text: root.cape-message;
+        color: #e5484d;
         font-size: 11px;
         wrap: word-wrap;
       }

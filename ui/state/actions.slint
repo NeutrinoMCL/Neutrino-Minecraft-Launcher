@@ -19,6 +19,10 @@ export global Actions {
   callback set-active-account(string);
   callback set-default-skin(string, SkinType);
   callback choose-custom-skin(string);
+  /// 选择离线角色的自定义披风；返回错误信息（空字符串表示成功或取消）
+  callback choose-custom-cape(string) -> string;
+  /// 开启 / 关闭披风渲染
+  callback set-cape-enabled(string, bool);
   callback start-microsoft-login();
 
   /// 把当前主题偏好写回 conf.toml（"system" / "dark" / "light"）
@@ -93,6 +97,8 @@ export global Actions {
   callback preview-orbit-start();
   /// 3D 预览：鼠标相对按下点的位移（像素）
   callback preview-orbit(length, length);
+  /// 3D 预览：滚轮缩放；正数（前推）拉近，负数（后拉）拉远
+  callback zoom-preview(length);
   /// 加载指定角色的皮肤到 3D 预览；第二个参数表示当前是否浅色主题
   callback preview-skin(string, bool);
 }

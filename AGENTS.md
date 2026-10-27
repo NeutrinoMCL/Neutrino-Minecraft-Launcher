@@ -78,6 +78,7 @@ CI (`.github/workflows/ci.yml`, `windows-latest`) runs exactly fmt â†’ clippy â†
   `%APPDATA%/Neutrino/conf.toml`; the settings page writes back to that same file. `./conf.toml` is
   not gitignored. Accounts/tokens live in `%APPDATA%/Neutrino/account.toml` (TOML; legacy
   `accounts.json` is migrated automatically on first load and removed after a successful write).
+  Custom skins and offline capes are copied to `%APPDATA%/Neutrino/skins` and `.../capes`.
 - `.env` (copy `.env.example`; ignored) supplies `NEUTRINO_MSA_CLIENT_ID` for Microsoft login and
   `CURSEFORGE_API_KEY` / legacy `NEUTRINO_CURSEFORGE_API_KEY`. The CurseForge key is read literally
   from the `.env` file, bypassing dotenvy's expansion (it would expand `$` inside keys); an external

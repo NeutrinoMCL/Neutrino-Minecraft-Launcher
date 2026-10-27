@@ -32,6 +32,10 @@ pub struct Account {
     pub name: String,
     pub kind: AccountKind,
     pub skin: Skin,
+    /// 仅离线角色有：自定义披风图片路径。
+    pub cape: Option<String>,
+    /// 是否在 3D 预览里渲染披风。
+    pub cape_enabled: bool,
     /// 仅 Microsoft 账号有；离线账号为 None。
     pub microsoft: Option<MicrosoftAuth>,
 }
@@ -61,6 +65,10 @@ struct AccountFile {
     skin: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     skin_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cape_path: Option<String>,
+    #[serde(default)]
+    cape_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     microsoft: Option<MicrosoftAuthFile>,
 }
@@ -175,6 +183,8 @@ impl Store {
                 name: name.to_string(),
                 kind: AccountKind::Offline,
                 skin: Skin::Steve,
+                cape: None,
+                cape_enabled: false,
                 microsoft: None,
             });
             store.active = Some(name.to_string());
@@ -243,12 +253,16 @@ impl Store {
                 let account = &mut store.accounts[index];
                 account.name = name.to_string();
                 account.kind = AccountKind::Microsoft;
+                account.cape = None;
+                account.cape_enabled = false;
                 account.microsoft = Some(auth);
             } else {
                 store.accounts.push(Account {
                     name: name.to_string(),
                     kind: AccountKind::Microsoft,
                     skin: Skin::Steve,
+                    cape: None,
+                    cape_enabled: false,
                     microsoft: Some(auth),
                 });
             }
@@ -311,6 +325,45 @@ impl Store {
         })
     }
 
+    /// 设置离线角色的自定义披风；传 `None` 表示清除。设置后默认开启渲染。
+    pub fn set_cape(&mut self, name: &str, cape: Option<String>) -> Result<(), String> {
+        self.update(|store| {
+            let Some(account) = store
+                .accounts
+                .iter_mut()
+                .find(|account| account.name.eq_ignore_ascii_case(name))
+            else {
+                return Err("未找到该角色".into());
+            };
+            if account.kind != AccountKind::Offline {
+                return Err("只有离线角色可以设置自定义披风".into());
+            }
+
+            account.cape_enabled = cape.is_some();
+            account.cape = cape;
+            Ok(())
+        })
+    }
+
+    /// 开启 / 关闭披风渲染，不影响已经设置的披风文件。
+    pub fn set_cape_enabled(&mut self, name: &str, enabled: bool) -> Result<(), String> {
+        self.update(|store| {
+            let Some(account) = store
+                .accounts
+                .iter_mut()
+                .find(|account| account.name.eq_ignore_ascii_case(name))
+            else {
+                return Err("未找到该角色".into());
+            };
+            if account.cape.is_none() {
+                return Err("该角色还没有自定义披风".into());
+            }
+
+            account.cape_enabled = enabled;
+            Ok(())
+        })
+    }
+
     fn save(&self) -> Result<(), String> {
         let file = StoreFile {
             accounts: self
@@ -332,6 +385,8 @@ impl Store {
                         .to_string(),
                         skin,
                         skin_path,
+                        cape_path: account.cape.clone(),
+                        cape_enabled: account.cape_enabled,
                         microsoft: account.microsoft.as_ref().map(|auth| MicrosoftAuthFile {
                             uuid: auth.uuid.clone(),
                             access_token: auth.access_token.clone(),
@@ -390,12 +445,40 @@ pub fn pick_custom_skin(name: &str) -> Result<Option<Skin>, String> {
     Ok(Some(Skin::Custom(destination.display().to_string())))
 }
 
+pub fn pick_custom_cape(name: &str) -> Result<Option<String>, String> {
+    let Some(source) = rfd::FileDialog::new()
+        .add_filter("PNG 图片", &["png"])
+        .set_title("选择披风图片")
+        .pick_file()
+    else {
+        return Ok(None);
+    };
+
+    let (width, height) =
+        image::image_dimensions(&source).map_err(|error| format!("读取披风图片失败：{error}"))?;
+    if width < 64 || width % 64 != 0 || height != width / 2 {
+        return Err("披风图片必须是 64×32 或 128×64 的 PNG 模板".to_string());
+    }
+
+    let dir = capes_dir();
+    fs::create_dir_all(&dir).map_err(|error| format!("创建披风目录失败：{error}"))?;
+
+    let destination = dir.join(format!("{name}.png"));
+    fs::copy(&source, &destination).map_err(|error| format!("复制披风文件失败：{error}"))?;
+
+    Ok(Some(destination.display().to_string()))
+}
+
 fn accounts_file() -> PathBuf {
     data_dir().join("account.toml")
 }
 
 fn skins_dir() -> PathBuf {
     data_dir().join("skins")
+}
+
+fn capes_dir() -> PathBuf {
+    data_dir().join("capes")
 }
 
 /// 启动器缓存目录（图标等）。
@@ -457,6 +540,8 @@ fn account_from_file(item: AccountFile) -> Option<Account> {
         kind,
         skin,
         skin_path,
+        cape_path,
+        cape_enabled,
         microsoft,
     } = item;
     if name.is_empty() {
@@ -472,6 +557,8 @@ fn account_from_file(item: AccountFile) -> Option<Account> {
         "custom" => Skin::Custom(skin_path.unwrap_or_default()),
         _ => Skin::Steve,
     };
+    let cape = cape_path.filter(|path| !path.trim().is_empty());
+    let cape_enabled = kind == AccountKind::Offline && cape_enabled && cape.is_some();
     let microsoft = microsoft.and_then(|auth| {
         if auth.uuid.is_empty() {
             return None;
@@ -488,6 +575,8 @@ fn account_from_file(item: AccountFile) -> Option<Account> {
         name,
         kind,
         skin,
+        cape,
+        cape_enabled,
         microsoft,
     })
 }
@@ -538,6 +627,8 @@ fn read_legacy_json(path: &Path) -> Option<(Vec<Account>, Option<String>)> {
                         name,
                         kind,
                         skin,
+                        cape: None,
+                        cape_enabled: false,
                         microsoft,
                     })
                 })
@@ -601,6 +692,8 @@ mod tests {
                 name: "Steve".into(),
                 kind: AccountKind::Offline,
                 skin: Skin::Steve,
+                cape: None,
+                cape_enabled: false,
                 microsoft: None,
             }]
         );
@@ -658,6 +751,45 @@ mod tests {
         assert_eq!(
             temp.store().accounts()[0].skin,
             Skin::Custom(r"C:\skins\steve.png".into())
+        );
+    }
+
+    #[test]
+    fn custom_cape_survives_toml_roundtrip_and_can_be_toggled() {
+        let temp = TempDir::new("cape-toml");
+        let mut store = temp.store();
+        store.add_offline("Steve").expect("add account");
+        store
+            .set_cape("Steve", Some(r"C:\capes\steve.png".into()))
+            .expect("set custom cape");
+
+        let reloaded = temp.store();
+        let account = &reloaded.accounts()[0];
+        assert_eq!(account.cape.as_deref(), Some(r"C:\capes\steve.png"));
+        assert!(account.cape_enabled);
+
+        store
+            .set_cape_enabled("Steve", false)
+            .expect("disable cape");
+        assert!(!temp.store().accounts()[0].cape_enabled);
+
+        store.set_cape("Steve", None).expect("clear cape");
+        assert!(temp.store().accounts()[0].cape.is_none());
+        assert!(!temp.store().accounts()[0].cape_enabled);
+    }
+
+    #[test]
+    fn microsoft_accounts_cannot_set_custom_cape() {
+        let temp = TempDir::new("cape-microsoft");
+        let mut store = temp.store();
+        store
+            .upsert_microsoft("Alex", "uuid-1", "access-1", "refresh-1", 100)
+            .expect("add microsoft account");
+
+        assert!(
+            store
+                .set_cape("Alex", Some(r"C:\capes\alex.png".into()))
+                .is_err()
         );
     }
 

@@ -111,30 +111,40 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         });
 
+        let zoom_state = preview.clone();
+        let zoom_handle = ui.as_weak();
+        ui.global::<Actions>().on_zoom_preview(move |delta| {
+            let Ok(mut scene) = zoom_state.lock() else {
+                return;
+            };
+            scene.zoom_by(delta);
+            scene.render();
+
+            if let (Some(image), Some(ui)) = (scene.image(), zoom_handle.upgrade()) {
+                ui.global::<AppState>().set_preview_image(image);
+            }
+        });
+
         let skin_state = preview.clone();
         let skin_handle = ui.as_weak();
         let skin_store = account_store.clone();
         ui.global::<Actions>().on_preview_skin(move |name, light| {
-            let bytes = {
+            let Some((skin_bytes, cape_bytes, cape_enabled)) = ({
                 let store = lock_store(&skin_store);
-                store
-                    .accounts()
-                    .iter()
-                    .find(|account| account.name == name.as_str())
-                    .map(|account| match &account.skin {
-                        accounts::Skin::Steve => DEFAULT_STEVE_SKIN.to_vec(),
-                        accounts::Skin::Alex => DEFAULT_ALEX_SKIN.to_vec(),
-                        accounts::Skin::Custom(path) => std::fs::read(path).unwrap_or_default(),
-                    })
-            };
-
-            let Some(bytes) = bytes.filter(|bytes| !bytes.is_empty()) else {
+                preview_assets(&store, name.as_str())
+            }) else {
                 return;
             };
-            let Ok(skin) = image::load_from_memory(&bytes) else {
+
+            let Ok(skin) = image::load_from_memory(&skin_bytes) else {
                 return;
             };
             let skin = skin.to_rgba8();
+            let cape = cape_bytes.and_then(|bytes| {
+                image::load_from_memory(&bytes)
+                    .ok()
+                    .map(|image| image.to_rgba8())
+            });
 
             let Ok(mut scene) = skin_state.lock() else {
                 return;
@@ -142,6 +152,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             scene.set_light_background(light);
             if !scene.set_skin(&skin) {
                 return;
+            }
+            match cape {
+                Some(cape) if scene.set_cape(&cape) => {
+                    scene.set_cape_visible(cape_enabled);
+                }
+                _ => scene.clear_cape(),
             }
             scene.render();
 
@@ -420,6 +436,39 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(error) => eprintln!("选择自定义皮肤失败：{error}"),
         }
     });
+
+    let cape_handle = ui.as_weak();
+    let cape_store = account_store.clone();
+    ui.global::<Actions>().on_choose_custom_cape(move |name| {
+        match accounts::pick_custom_cape(name.as_str()) {
+            Ok(Some(path)) => {
+                let mut store = lock_store(&cape_store);
+                if let Err(error) = store.set_cape(name.as_str(), Some(path)) {
+                    return error.into();
+                }
+                if let Some(ui) = cape_handle.upgrade() {
+                    update_account_state(&ui, &store);
+                }
+                "".into()
+            }
+            Ok(None) => "".into(),
+            Err(error) => error.into(),
+        }
+    });
+
+    let cape_handle = ui.as_weak();
+    let cape_store = account_store.clone();
+    ui.global::<Actions>()
+        .on_set_cape_enabled(move |name, enabled| {
+            let mut store = lock_store(&cape_store);
+            if let Err(error) = store.set_cape_enabled(name.as_str(), enabled) {
+                eprintln!("切换披风渲染失败：{error}");
+                return;
+            }
+            if let Some(ui) = cape_handle.upgrade() {
+                update_account_state(&ui, &store);
+            }
+        });
 
     let ui_handle = ui.as_weak();
     ui.global::<Actions>().on_start_microsoft_login(move || {
@@ -1326,6 +1375,29 @@ fn default_face(bytes: &[u8]) -> slint::Image {
         .unwrap_or_default()
 }
 
+/// 读取 3D 预览需要的皮肤和披风字节；披风关闭时不读取文件。
+fn preview_assets(store: &accounts::Store, name: &str) -> Option<(Vec<u8>, Option<Vec<u8>>, bool)> {
+    let account = store
+        .accounts()
+        .iter()
+        .find(|account| account.name == name)?;
+    let skin = match &account.skin {
+        accounts::Skin::Steve => DEFAULT_STEVE_SKIN.to_vec(),
+        accounts::Skin::Alex => DEFAULT_ALEX_SKIN.to_vec(),
+        accounts::Skin::Custom(path) => std::fs::read(path).ok()?,
+    };
+    let cape = if account.cape_enabled {
+        account
+            .cape
+            .as_ref()
+            .and_then(|path| std::fs::read(path).ok())
+    } else {
+        None
+    };
+
+    Some((skin, cape, account.cape_enabled))
+}
+
 fn update_account_state(ui: &AppWindow, store: &accounts::Store) {
     let accounts = store
         .accounts()
@@ -1345,6 +1417,8 @@ fn update_account_state(ui: &AppWindow, store: &accounts::Store) {
                 },
                 skin,
                 avatar,
+                has_cape: account.cape.is_some(),
+                cape_enabled: account.cape_enabled && account.cape.is_some(),
             }
         })
         .collect::<Vec<_>>();
