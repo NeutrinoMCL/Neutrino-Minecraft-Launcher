@@ -1,4 +1,5 @@
-import { Palette } from "std-widgets.slint";
+import { LineEdit, ListView, Palette } from "std-widgets.slint";
+import { ActionButton, Tag } from "../components/common.slint";
 import { SettingsSection, ThemePreference } from "../models/enums.slint";
 import { JavaInfo } from "../models/java.slint";
 import { AppState } from "../state/app-state.slint";
@@ -200,28 +201,10 @@ component JavaCard inherits Rectangle {
           font-weight: 600;
         }
 
-        Rectangle {
-          height: 20px;
-          horizontal-stretch: 0;
-          border-radius: 6px;
-          background: #dbeafe;
-
-          HorizontalLayout {
-            padding-left: 6px;
-            padding-right: 6px;
-            alignment: center;
-            cross-axis-alignment: center;
-
-            Text {
-              text: root.info.lts
-                ? "Java \{root.info.major} (LTS)"
-                : "Java \{root.info.major}";
-              color: #1e40af;
-              font-size: 11px;
-              font-weight: 600;
-              vertical-alignment: center;
-            }
-          }
+        Tag {
+          label: root.info.lts
+            ? "Java \{root.info.major} (LTS)"
+            : "Java \{root.info.major}";
         }
 
         Text {
@@ -336,7 +319,222 @@ component ThemeOption inherits Rectangle {
   }
 }
 
+// 设置页按钮：沿用 common 的实现，只覆盖高度
+component SettingsButton inherits ActionButton {
+  button-height: 30px;
+}
+
+component ToggleSwitch inherits Rectangle {
+  in property <bool> checked;
+
+  callback toggled();
+
+  width: 40px;
+  height: 22px;
+  horizontal-stretch: 0;
+  border-radius: 11px;
+  background: root.checked
+    ? Palette.accent-background
+    : Palette.foreground.with-alpha(0.18);
+
+  Rectangle {
+    width: 18px;
+    height: 18px;
+    y: 2px;
+    x: root.checked ? root.width - 20px : 2px;
+    border-radius: 9px;
+    background: #ffffff;
+    animate x { duration: 150ms; easing: ease-in-out; }
+  }
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      root.toggled();
+    }
+  }
+}
+
+component ColorSwatch inherits Rectangle {
+  in property <color> swatch;
+  in property <bool> selected;
+
+  callback clicked();
+
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: root.swatch;
+  border-width: root.selected ? 2px : 1px;
+  border-color: root.selected
+    ? Palette.foreground
+    : Palette.foreground.with-alpha(0.15);
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      root.clicked();
+    }
+  }
+}
+
+component WallpaperRow inherits Rectangle {
+  in property <string> wallpaper-path;
+  in property <string> wallpaper-name;
+  in property <image> thumbnail;
+  in property <bool> has-thumbnail;
+  in property <bool> selected;
+
+  callback select();
+  callback remove();
+
+  height: 76px;
+  background: transparent;
+
+  card := Rectangle {
+    height: 68px;
+    y: 4px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.selected
+      ? Palette.accent-background.with-alpha(0.75)
+      : Palette.foreground.with-alpha(0.08);
+    background: root.selected
+      ? Palette.accent-background.with-alpha(0.12)
+      : Palette.background.with-alpha(0.35);
+
+    select-touch := TouchArea {
+      mouse-cursor: pointer;
+      clicked => {
+        root.select();
+      }
+    }
+
+    HorizontalLayout {
+      padding: 7px;
+      spacing: 10px;
+      cross-axis-alignment: center;
+
+      Rectangle {
+        width: 88px;
+        height: 50px;
+        border-radius: 4px;
+        clip: true;
+        background: Palette.foreground.with-alpha(0.05);
+
+        if root.has-thumbnail : Image {
+          source: root.thumbnail;
+          width: 100%;
+          height: 100%;
+          image-fit: cover;
+        }
+
+        if !root.has-thumbnail : Image {
+          source: @image-url("../images/icons/images.svg");
+          width: 18px;
+          height: 18px;
+          colorize: Palette.foreground.with-alpha(0.35);
+        }
+      }
+
+      VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        spacing: 2px;
+
+        HorizontalLayout {
+          spacing: 6px;
+          cross-axis-alignment: center;
+
+          Text {
+            text: root.wallpaper-name;
+            color: Palette.foreground;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-stretch: 1;
+            overflow: elide;
+          }
+
+          if root.selected : Rectangle {
+            height: 18px;
+            min-width: 34px;
+            horizontal-stretch: 0;
+            border-radius: 4px;
+            background: Palette.accent-background.with-alpha(0.18);
+
+            HorizontalLayout {
+              padding-left: 6px;
+              padding-right: 6px;
+              alignment: center;
+              cross-axis-alignment: center;
+
+              Text {
+                text: "当前";
+                color: Palette.accent-background;
+                font-size: 10px;
+                font-weight: 600;
+                vertical-alignment: center;
+              }
+            }
+          }
+        }
+
+        Text {
+          text: root.wallpaper-path;
+          color: Palette.foreground.with-alpha(0.45);
+          font-size: 11px;
+          overflow: elide;
+        }
+      }
+
+      Rectangle {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        background: remove-touch.has-hover ? #c0392b22 : transparent;
+
+        Image {
+          source: @image-url("../images/icons/trash.svg");
+          width: 15px;
+          height: 15px;
+          colorize: remove-touch.has-hover
+            ? #c0392b
+            : Palette.foreground.with-alpha(0.42);
+        }
+
+        remove-touch := TouchArea {
+          mouse-cursor: pointer;
+          clicked => {
+            root.remove();
+          }
+        }
+      }
+    }
+  }
+}
+
 component AppearancePanel inherits Rectangle {
+  in-out property <string> wallpaper-message: "";
+  in-out property <string> color-input: "";
+  in property <[color]> palette: [
+    #0F1115,
+    #1E293B,
+    #1E3A8A,
+    #0E7490,
+    #047857,
+    #4D7C0F,
+    #B45309,
+    #B91C1C,
+    #9D174D,
+    #6D28D9,
+    #E2E8F0,
+    #F8FAFC
+  ];
+
+  init => {
+    root.color-input = AppState.wallpaper-color-hex;
+  }
+
   background: transparent;
 
   VerticalLayout {
@@ -401,75 +599,358 @@ component AppearancePanel inherits Rectangle {
       }
     }
 
-    Text {
-      text: "背景";
-      color: Palette.foreground;
-      font-size: 14px;
-      font-weight: 600;
+    HorizontalLayout {
+      spacing: 8px;
+      cross-axis-alignment: center;
+
+      Text {
+        text: "背景";
+        color: Palette.foreground;
+        font-size: 14px;
+        font-weight: 600;
+        horizontal-stretch: 1;
+        vertical-alignment: center;
+      }
+
+      ThemeOption {
+        label: "图片";
+        selected: !AppState.background-is-color;
+        clicked => {
+          root.wallpaper-message = Actions.choose-background-mode("image");
+        }
+      }
+
+      ThemeOption {
+        label: "纯色";
+        selected: AppState.background-is-color;
+        clicked => {
+          root.wallpaper-message = Actions.choose-background-mode("color");
+          root.color-input = AppState.wallpaper-color-hex;
+        }
+      }
     }
 
-    Rectangle {
-      height: 64px;
-      border-radius: 6px;
-      background: Palette.background.with-alpha(0.5);
-      border-width: 1px;
-      border-color: Palette.foreground.with-alpha(0.08);
+    if root.wallpaper-message != "" : Text {
+      text: root.wallpaper-message;
+      color: #e5484d;
+      font-size: 12px;
+      overflow: elide;
+    }
 
-      HorizontalLayout {
-        padding: 8px;
-        spacing: 10px;
-        cross-axis-alignment: center;
+    if !AppState.background-is-color : VerticalLayout {
+      vertical-stretch: 1;
+      spacing: 8px;
 
-        Rectangle {
-          width: 80px;
-          height: 48px;
-          border-radius: 6px;
-          clip: true;
+      Rectangle {
+        height: 88px;
+        border-radius: 6px;
+        background: Palette.background.with-alpha(0.5);
+        border-width: 1px;
+        border-color: Palette.foreground.with-alpha(0.08);
 
-          Image {
-            source: @image-url("../images/backgrounds/Jokull.jpg");
-            width: 100%;
-            height: 100%;
-            image-fit: cover;
+        HorizontalLayout {
+          padding: 10px;
+          spacing: 12px;
+          cross-axis-alignment: center;
+
+          Rectangle {
+            width: 112px;
+            height: 68px;
+            border-radius: 6px;
+            clip: true;
+
+            Image {
+              source: AppState.wallpaper;
+              width: 100%;
+              height: 100%;
+              image-fit: cover;
+            }
+          }
+
+          VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+              text: "当前背景";
+              color: Palette.foreground.with-alpha(0.65);
+              font-size: 12px;
+            }
+
+            Text {
+              text: AppState.background-name;
+              color: Palette.foreground;
+              font-size: 13px;
+              font-weight: 600;
+              overflow: elide;
+            }
+
+            Text {
+              text: "支持 PNG / JPG，可多选";
+              color: Palette.foreground.with-alpha(0.45);
+              font-size: 11px;
+            }
+          }
+
+          SettingsButton {
+            label: "添加图片";
+            primary: true;
+            clicked => {
+              root.wallpaper-message = Actions.choose-custom-wallpaper();
+            }
+          }
+
+          SettingsButton {
+            label: "恢复默认";
+            clicked => {
+              root.wallpaper-message = Actions.reset-wallpaper();
+            }
           }
         }
+      }
 
-        VerticalLayout {
-          alignment: center;
-          spacing: 2px;
+      HorizontalLayout {
+        spacing: 8px;
+        cross-axis-alignment: center;
 
-          Text {
-            text: "当前背景";
-            color: Palette.foreground.with-alpha(0.65);
-            font-size: 12px;
-          }
+        Text {
+          text: "已选壁纸";
+          color: Palette.foreground;
+          font-size: 14px;
+          font-weight: 600;
+        }
 
-          Text {
-            text: "Jokull.jpg";
-            color: Palette.foreground;
-            font-size: 13px;
-            font-weight: 600;
-          }
+        Text {
+          text: "\{AppState.wallpapers.length} 张";
+          color: Palette.foreground.with-alpha(0.5);
+          font-size: 12px;
+          vertical-alignment: center;
         }
 
         Rectangle {
           horizontal-stretch: 1;
         }
+
+        Text {
+          text: "随机选择";
+          color: Palette.foreground.with-alpha(0.75);
+          font-size: 12px;
+          vertical-alignment: center;
+        }
+
+        ToggleSwitch {
+          checked: AppState.wallpaper-random;
+          toggled => {
+            root.wallpaper-message = Actions.set-wallpaper-random(!AppState.wallpaper-random);
+          }
+        }
+      }
+
+      if AppState.wallpaper-random && AppState.wallpapers.length > 0 : Text {
+        text: "每次启动会从已选壁纸中随机挑一张";
+        color: Palette.foreground.with-alpha(0.5);
+        font-size: 11px;
+      }
+
+      if AppState.wallpapers.length == 0 : Rectangle {
+        height: 64px;
+        border-radius: 6px;
+        background: Palette.background.with-alpha(0.35);
+        border-width: 1px;
+        border-color: Palette.foreground.with-alpha(0.08);
+
+        Text {
+          text: "还没有添加自定义壁纸";
+          color: Palette.foreground.with-alpha(0.45);
+          font-size: 12px;
+          horizontal-alignment: center;
+          vertical-alignment: center;
+        }
+      }
+
+      if AppState.wallpapers.length > 0 : ListView {
+        vertical-stretch: 1;
+        min-height: 140px;
+
+        for wallpaper in AppState.wallpapers : WallpaperRow {
+          wallpaper-path: wallpaper.path;
+          wallpaper-name: wallpaper.name;
+          thumbnail: wallpaper.thumbnail;
+          has-thumbnail: wallpaper.has-thumbnail;
+          selected: wallpaper.selected;
+
+          select => {
+            root.wallpaper-message = Actions.select-wallpaper(wallpaper.path);
+          }
+
+          remove => {
+            root.wallpaper-message = Actions.remove-wallpaper(wallpaper.path);
+          }
+        }
       }
     }
 
-    Rectangle {
-      vertical-stretch: 1;
+    if AppState.background-is-color : VerticalLayout {
+      spacing: 8px;
+
+      Rectangle {
+        height: 88px;
+        border-radius: 6px;
+        background: Palette.background.with-alpha(0.5);
+        border-width: 1px;
+        border-color: Palette.foreground.with-alpha(0.08);
+
+        HorizontalLayout {
+          padding: 10px;
+          spacing: 12px;
+          cross-axis-alignment: center;
+
+          Rectangle {
+            width: 112px;
+            height: 68px;
+            border-radius: 6px;
+            background: AppState.wallpaper-color;
+            border-width: 1px;
+            border-color: Palette.foreground.with-alpha(0.15);
+          }
+
+          VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+              text: "当前背景";
+              color: Palette.foreground.with-alpha(0.65);
+              font-size: 12px;
+            }
+
+            Text {
+              text: "纯色 " + AppState.wallpaper-color-hex;
+              color: Palette.foreground;
+              font-size: 13px;
+              font-weight: 600;
+            }
+
+            Text {
+              text: "点击下方色块，或输入自定义 HEX";
+              color: Palette.foreground.with-alpha(0.45);
+              font-size: 11px;
+            }
+          }
+
+          SettingsButton {
+            label: "恢复默认";
+            clicked => {
+              root.wallpaper-message = Actions.reset-wallpaper();
+            }
+          }
+        }
+      }
+
+      Text {
+        text: "调色板";
+        color: Palette.foreground;
+        font-size: 14px;
+        font-weight: 600;
+      }
+
+      Rectangle {
+        height: 54px;
+        border-radius: 6px;
+        background: Palette.background.with-alpha(0.35);
+        border-width: 1px;
+        border-color: Palette.foreground.with-alpha(0.08);
+
+        FlexboxLayout {
+          padding: 10px;
+          spacing: 8px;
+
+          for swatch in root.palette : ColorSwatch {
+            swatch: swatch;
+            selected: swatch == AppState.wallpaper-color;
+
+            clicked => {
+              root.pick-color(swatch);
+            }
+          }
+        }
+      }
+
+      Rectangle {
+        height: 40px;
+        border-radius: 6px;
+        background: Palette.background.with-alpha(0.5);
+        border-width: 1px;
+        border-color: Palette.foreground.with-alpha(0.08);
+
+        HorizontalLayout {
+          padding-left: 12px;
+          padding-right: 6px;
+          spacing: 8px;
+          cross-axis-alignment: center;
+
+          Text {
+            text: "自定义颜色";
+            color: Palette.foreground;
+            font-size: 12px;
+            vertical-alignment: center;
+          }
+
+          LineEdit {
+            text <=> root.color-input;
+            placeholder-text: "#RRGGBB";
+            horizontal-stretch: 1;
+            height: 28px;
+          }
+
+          SettingsButton {
+            label: "应用";
+            primary: true;
+            clicked => {
+              root.apply-color();
+            }
+          }
+        }
+      }
+
+      Text {
+        text: "支持 #RGB / #RRGGBB，例如 #1E3A8A";
+        color: Palette.foreground.with-alpha(0.45);
+        font-size: 11px;
+      }
+
+      Rectangle {
+        vertical-stretch: 1;
+      }
     }
   }
 
   function set-theme(preference: ThemePreference) {
     Theme.preference = preference;
-    Palette.color-scheme = preference == ThemePreference.system
-      ? ColorScheme.unknown
-      : preference == ThemePreference.dark
-        ? ColorScheme.dark
-        : ColorScheme.light;
+    Theme.apply();
+    Actions.save-theme-preference(
+      preference == ThemePreference.system
+        ? "system"
+        : preference == ThemePreference.dark
+          ? "dark"
+          : "light"
+    );
+  }
+
+  function apply-color() {
+    root.wallpaper-message = Actions.set-wallpaper-color(root.color-input);
+    if (root.wallpaper-message == "") {
+      root.color-input = AppState.wallpaper-color-hex;
+    }
+  }
+
+  function pick-color(value: color) {
+    root.wallpaper-message = Actions.pick-wallpaper-color(value);
+    if (root.wallpaper-message == "") {
+      root.color-input = AppState.wallpaper-color-hex;
+    }
   }
 }
 

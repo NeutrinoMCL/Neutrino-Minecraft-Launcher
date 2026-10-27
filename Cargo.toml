@@ -19,7 +19,7 @@ path = "src/bin/neutrino-install.rs"
 
 [dependencies]
 dotenvy = "0.15"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 md-5 = "0.11.0"
 minecraft-msa-auth = { version = "0.5.0", features = ["is_sync", "ureq"] }
 oauth2 = { version = "5.0.0", features = ["reqwest-blocking"] }
@@ -27,6 +27,7 @@ rfd = { version = "0.17.2", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.11.0"
+toml = "1"
 thiserror = "2"
 # 注意：这里关掉了 `accessibility`（默认开启）。
 # 在本机 Windows 上，Slint 1.18 + accesskit_windows 0.34 创建窗口时
@@ -34,17 +35,21 @@ thiserror = "2"
 # 去掉该特性后界面正常。需要读屏支持时可把 "accessibility" 加回来：
 #   features = [..., "accessibility"]
 slint = { version = "1.18.1", default-features = false, features = [
-    "std",
-    "backend-default",
-    "renderer-femtovg",
-    "renderer-software",
-    "compat-1-2",
+  "std",
+  "backend-default",
+  "renderer-femtovg",
+  "renderer-femtovg-wgpu",
+  "renderer-software",
+  "compat-1-2",
+  "unstable-wgpu-30",
 ] }
 # MSA 登录和安装核心 core/net.rs 共用 ureq 3。
 ureq = { version = "3", features = ["json"] }
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+# 3D 预览：Slint 通过 wgpu 渲染，纹理直接导入成 Image（unstable-wgpu-30）。
 wgpu = "30.0.1"
 bytemuck = { version = "1.25.2", features = ["derive"] }
+pollster = "1.0.1"
 
 [build-dependencies]
 slint-build = "1.18.1"
@@ -52,6 +57,7 @@ slint-build = "1.18.1"
 # 优化等级：0~3
 # s: 优化二进制大小
 # z：优化二进制大小,同时关闭循环向量
+# dev模式不优化会很卡
 [profile.dev.package."*"]
 opt-level = 2
 
@@ -59,3 +65,9 @@ opt-level = 2
 opt-level = 3
 codegen-units = 1
 lto = true
+
+# wgsl-analyzer / wgsl.run 的项目清单（WESL manifest 字段）
+[package.metadata.wgsl-analyzer]
+edition = "2026_pre"
+package_manager = "cargo"
+root = "src"

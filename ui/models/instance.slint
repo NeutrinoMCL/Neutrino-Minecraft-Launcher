@@ -15,3 +15,14 @@ export struct ContentFile {
   /// 模组加载器：Fabric / Quilt / Forge / NeoForge（没有时为空）
   loader: string
 }
+
+/// 可更新的实例内容
+export struct ContentUpdateInfo {
+  key: string,
+  name: string,
+  current-version: string,
+  new-version: string,
+  source: string,
+  file-name: string,
+  size: string
+}

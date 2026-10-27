@@ -1,8 +1,10 @@
 import { LineEdit, ListView, Palette } from "std-widgets.slint";
+import { ActionButton, EmptyHint, ListPanel, MessageStrip, ModalCard, RefreshButton, Tag } from "../components/common.slint";
 import { InstanceTab, VersionFilter } from "../models/enums.slint";
 import { ContentFile } from "../models/instance.slint";
 import { AppState } from "../state/app-state.slint";
 import { Actions } from "../state/actions.slint";
+import { DiscoverView } from "discover-view.slint";
 
 component InstanceMenuItem inherits Rectangle {
   in property <string> label;
@@ -198,24 +200,18 @@ component FilterPill inherits Rectangle {
   }
 }
 
-// 原版版本行
+// 原版版本行：整行点击直接进入模组加载器选择
 component VersionRow inherits Rectangle {
   in property <string> version-id;
+  in property <string> kind;
   in property <string> kind-label;
+  in property <bool> is-fools;
   in property <string> release-date;
-  in property <bool> installing;
-  /// 全局是否有安装任务（用于禁用其它按钮）
-  in property <bool> busy;
 
-  callback install();
+  callback choose();
 
   height: 62px;
   background: transparent;
-
-  // 注意：这个 TouchArea 必须声明在 card 之前，否则会盖住“安装”按钮。
-  touch := TouchArea {
-    mouse-cursor: pointer;
-  }
 
   card := Rectangle {
     x: 0;
@@ -231,22 +227,37 @@ component VersionRow inherits Rectangle {
 
     HorizontalLayout {
       padding-left: 12px;
-      padding-right: 8px;
+      padding-right: 12px;
       spacing: 10px;
       cross-axis-alignment: center;
 
-      Rectangle {
-        width: 32px;
-        height: 32px;
-        border-radius: 6px;
-        background: Palette.accent-background.with-alpha(0.14);
+      // 用不同的方块图标区分版本类型
+      if root.is-fools : Image {
+        source: @image-url("../images/icons/mc/version/Yellow_Glazed_Terracotta_JE1_BE1.png");
+        width: 38px;
+        height: 38px;
+        image-fit: contain;
+      }
 
-        Image {
-          source: @image-url("../images/icons/instance.svg");
-          width: 18px;
-          height: 18px;
-          colorize: Palette.foreground.with-alpha(0.72);
-        }
+      if !root.is-fools && root.kind == "release" : Image {
+        source: @image-url("../images/icons/mc/version/Grass_Block_JE7_BE6.png");
+        width: 38px;
+        height: 38px;
+        image-fit: contain;
+      }
+
+      if !root.is-fools && root.kind == "snapshot" : Image {
+        source: @image-url("../images/icons/mc/version/Dirt_JE2_BE2.png");
+        width: 38px;
+        height: 38px;
+        image-fit: contain;
+      }
+
+      if !root.is-fools && root.kind != "release" && root.kind != "snapshot" : Image {
+        source: @image-url("../images/icons/mc/version/Stone_JE1.png");
+        width: 38px;
+        height: 38px;
+        image-fit: contain;
       }
 
       VerticalLayout {
@@ -270,64 +281,23 @@ component VersionRow inherits Rectangle {
       }
 
       // 类型徽章
-      Rectangle {
-        height: 20px;
-        horizontal-stretch: 0;
-        border-radius: 6px;
-        background: #dbeafe;
-
-        HorizontalLayout {
-          padding-left: 6px;
-          padding-right: 6px;
-          alignment: center;
-          cross-axis-alignment: center;
-
-          Text {
-            text: root.kind-label;
-            color: #1e40af;
-            font-size: 11px;
-            font-weight: 600;
-            vertical-alignment: center;
-          }
-        }
+      Tag {
+        label: root.kind-label;
       }
 
-      Rectangle {
-        height: 30px;
-        min-width: 78px;
-        horizontal-stretch: 0;
-        border-radius: 6px;
-        opacity: root.busy ? 0.4 : 1.0;
-        border-width: 1px;
-        border-color: Palette.accent-background.with-alpha(0.55);
-        background: install-touch.has-hover && !root.busy
-          ? Palette.accent-background.with-alpha(0.30)
-          : Palette.accent-background.with-alpha(0.18);
-
-        HorizontalLayout {
-          padding-left: 12px;
-          padding-right: 12px;
-          alignment: center;
-          cross-axis-alignment: center;
-
-          Text {
-            text: root.installing ? "安装中…" : "下载";
-            color: Palette.accent-background;
-            font-size: 12px;
-            font-weight: 600;
-            vertical-alignment: center;
-          }
-        }
-
-        install-touch := TouchArea {
-          mouse-cursor: pointer;
-          clicked => {
-            if (!root.busy) {
-              root.install();
-            }
-          }
-        }
+      Image {
+        source: @image-url("../images/icons/arrow-right.svg");
+        width: 14px;
+        height: 14px;
+        colorize: Palette.foreground.with-alpha(0.45);
       }
+    }
+  }
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      root.choose();
     }
   }
 }
@@ -399,6 +369,8 @@ component LoaderCard inherits Rectangle {
   in property <string> title;
   in property <string> subtitle;
   in property <string> mark;
+  in property <image> icon;
+  in property <bool> has-icon;
 
   callback clicked();
 
@@ -416,7 +388,22 @@ component LoaderCard inherits Rectangle {
     spacing: 12px;
     cross-axis-alignment: center;
 
-    Rectangle {
+    if root.has-icon : Rectangle {
+      width: 44px;
+      height: 44px;
+      border-radius: 8px;
+      clip: true;
+      background: Palette.foreground.with-alpha(0.06);
+
+      Image {
+        source: root.icon;
+        width: 100%;
+        height: 100%;
+        image-fit: contain;
+      }
+    }
+
+    if !root.has-icon : Rectangle {
       width: 36px;
       height: 36px;
       border-radius: 8px;
@@ -472,6 +459,7 @@ component LoaderCard inherits Rectangle {
 component LoaderVersionRow inherits Rectangle {
   in property <string> version;
   in property <bool> stable;
+  in property <bool> selected;
 
   callback choose();
 
@@ -493,30 +481,15 @@ component LoaderVersionRow inherits Rectangle {
       overflow: elide;
     }
 
-    if root.stable : Rectangle {
-      height: 20px;
-      border-radius: 6px;
-      background: #dbeafe;
-
-      HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        alignment: center;
-        cross-axis-alignment: center;
-
-        Text {
-          text: "稳定版";
-          color: #1e40af;
-          font-size: 11px;
-          font-weight: 600;
-          vertical-alignment: center;
-        }
-      }
+    if root.stable : Tag {
+      label: "稳定版";
     }
 
     Text {
-      text: "选择";
-      color: Palette.accent-background;
+      text: root.selected ? "当前" : "选择";
+      color: root.selected
+        ? Palette.foreground.with-alpha(0.45)
+        : Palette.accent-background;
       font-size: 12px;
       font-weight: 600;
       vertical-alignment: center;
@@ -532,7 +505,8 @@ component LoaderVersionRow inherits Rectangle {
 }
 
 // 安装进度条
-component InstallStrip inherits Rectangle {    height: 64px;
+component InstallStrip inherits Rectangle {
+  height: 64px;
   border-radius: 6px;
   background: Palette.accent-background.with-alpha(0.10);
   border-width: 1px;
@@ -588,31 +562,6 @@ component InstallStrip inherits Rectangle {    height: 64px;
 }
 
 // 提示条
-component MessageStrip inherits Rectangle {
-  in property <string> message;
-  in property <bool> ok;
-
-  height: 40px;
-  border-radius: 6px;
-  background: root.ok ? Palette.accent-background.with-alpha(0.10) : #fee2e2;
-  border-width: 1px;
-  border-color: root.ok ? Palette.accent-background.with-alpha(0.30) : #fecaca;
-
-  HorizontalLayout {
-    padding-left: 12px;
-    padding-right: 12px;
-    cross-axis-alignment: center;
-
-    Text {
-      text: root.message;
-      color: root.ok ? Palette.foreground : #991b1b;
-      font-size: 12px;
-      vertical-alignment: center;
-      overflow: elide;
-    }
-  }
-}
-
 component ContentRow inherits Rectangle {
   in property <string> name;
   in property <int> size;
@@ -623,8 +572,9 @@ component ContentRow inherits Rectangle {
   in property <image> fallback-icon;
   /// 模组版本（资源包 / 光影为空）
   in property <string> version;
-  /// 模组加载器：Fabric / Quilt / Forge / NeoForge
-  in property <string> loader;
+  /// 行操作（启用 / 禁用 / 删除）需要的实例路径和所属目录
+  in property <string> instance-path;
+  in property <string> folder-name;
 
   pure function format-size(bytes: int) -> string {
     if (bytes >= 1073741824) {
@@ -641,6 +591,9 @@ component ContentRow inherits Rectangle {
 
   height: 56px;
   background: row-touch.has-hover ? Palette.foreground.with-alpha(0.04) : transparent;
+
+  // 放在内容下面，这样行里的启用状态 / 删除按钮能优先拿到点击。
+  row-touch := TouchArea { }
 
   HorizontalLayout {
     padding-left: 12px;
@@ -684,27 +637,6 @@ component ContentRow inherits Rectangle {
         overflow: elide;
       }
 
-      if root.loader != "" : Rectangle {
-        height: 20px;
-        border-radius: 6px;
-        background: #dbeafe;
-
-        HorizontalLayout {
-          padding-left: 6px;
-          padding-right: 6px;
-          alignment: center;
-          cross-axis-alignment: center;
-
-          Text {
-            text: root.loader;
-            color: #1e40af;
-            font-size: 11px;
-            font-weight: 600;
-            vertical-alignment: center;
-          }
-        }
-      }
-
       Rectangle {
         horizontal-stretch: 1;
       }
@@ -721,8 +653,8 @@ component ContentRow inherits Rectangle {
       height: 22px;
       border-radius: 4px;
       background: root.enabled
-        ? Palette.accent-background.with-alpha(0.14)
-        : Palette.foreground.with-alpha(0.06);
+        ? Palette.accent-background.with-alpha(status-touch.has-hover ? 0.26 : 0.14)
+        : Palette.foreground.with-alpha(status-touch.has-hover ? 0.12 : 0.06);
 
       HorizontalLayout {
         padding-left: 7px;
@@ -739,10 +671,38 @@ component ContentRow inherits Rectangle {
           vertical-alignment: center;
         }
       }
+
+      status-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+          Actions.toggle-content(root.instance-path, root.folder-name, root.name);
+        }
+      }
+    }
+
+    Rectangle {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      background: delete-touch.has-hover ? #c0392b22 : transparent;
+
+      Image {
+        source: @image-url("../images/icons/trash.svg");
+        width: 15px;
+        height: 15px;
+        colorize: delete-touch.has-hover
+          ? #c0392b
+          : Palette.foreground.with-alpha(0.42);
+      }
+
+      delete-touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+          Actions.delete-content(root.instance-path, root.folder-name, root.name);
+        }
+      }
     }
   }
-
-  row-touch := TouchArea { }
 }
 
 component ContentPanel inherits Rectangle {
@@ -753,6 +713,9 @@ component ContentPanel inherits Rectangle {
   in property <string> folder-name;
   in property <image> icon;
   in property <[ContentFile]> items;
+
+  callback download();
+  callback check-updates();
 
   background: transparent;
 
@@ -769,7 +732,6 @@ component ContentPanel inherits Rectangle {
         color: Palette.foreground;
         font-size: 14px;
         font-weight: 600;
-        horizontal-stretch: 1;
         vertical-alignment: center;
       }
 
@@ -778,6 +740,10 @@ component ContentPanel inherits Rectangle {
         color: Palette.foreground.with-alpha(0.5);
         font-size: 12px;
         vertical-alignment: center;
+      }
+
+      Rectangle {
+        horizontal-stretch: 1;
       }
 
       Rectangle {
@@ -802,25 +768,70 @@ component ContentPanel inherits Rectangle {
           }
         }
       }
+
+      Rectangle {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        background: download-touch.has-hover
+          ? Palette.accent-background.with-alpha(0.20)
+          : Palette.accent-background.with-alpha(0.10);
+
+        Image {
+          source: @image-url("../images/icons/download.svg");
+          width: 16px;
+          height: 16px;
+          colorize: Palette.accent-background;
+        }
+
+        download-touch := TouchArea {
+          mouse-cursor: pointer;
+          clicked => {
+            root.download();
+          }
+        }
+      }
+
+      Rectangle {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        background: update-touch.has-hover
+          ? Palette.accent-background.with-alpha(0.20)
+          : Palette.accent-background.with-alpha(0.10);
+
+        Image {
+          source: @image-url("../images/icons/update.svg");
+          width: 16px;
+          height: 16px;
+          colorize: Palette.accent-background;
+        }
+
+        update-touch := TouchArea {
+          mouse-cursor: pointer;
+          clicked => {
+            root.check-updates();
+          }
+        }
+      }
     }
 
-    Rectangle {
+    ListPanel {
       vertical-stretch: 1;
-      border-radius: 6px;
-      background: Palette.background.with-alpha(0.5);
-      border-width: 1px;
-      border-color: Palette.foreground.with-alpha(0.08);
-      clip: true;
 
       if root.items.length == 0 : VerticalLayout {
         alignment: center;
         spacing: 6px;
 
-        Image {
-          source: root.icon;
-          width: 28px;
-          height: 28px;
-          colorize: Palette.foreground.with-alpha(0.3);
+        HorizontalLayout {
+          alignment: center;
+
+          Image {
+            source: root.icon;
+            width: 28px;
+            height: 28px;
+            colorize: Palette.foreground.with-alpha(0.3);
+          }
         }
 
         Text {
@@ -852,7 +863,8 @@ component ContentPanel inherits Rectangle {
           has-icon: item.has-icon;
           fallback-icon: root.icon;
           version: item.version;
-          loader: item.loader;
+          instance-path: root.instance-path;
+          folder-name: root.folder-name;
         }
       }
     }
@@ -934,7 +946,7 @@ component InstanceHomePanel inherits Rectangle {
       StatCard {
         label: "模组";
         count: root.mods-count;
-        icon: @image-url("../images/icons/puzzle.svg");
+        icon: @image-url("../images/icons/mod.svg");
       }
 
       StatCard {
@@ -973,16 +985,841 @@ component PlaceholderPanel inherits Rectangle {
   }
 }
 
+// 弹窗底部按钮
+// 向导 / 弹窗按钮：沿用 common 的实现，只覆盖尺寸
+component DialogActionButton inherits ActionButton {
+  button-height: 34px;
+  button-min-width: 88px;
+}
+
+// 创建方式卡片
+component CreateSourceCard inherits Rectangle {
+  in property <string> title;
+  in property <string> subtitle;
+
+  callback clicked();
+
+  height: 92px;
+  border-radius: 6px;
+  background: touch.has-hover
+    ? Palette.foreground.with-alpha(0.08)
+    : Palette.foreground.with-alpha(0.04);
+  border-width: 1px;
+  border-color: Palette.foreground.with-alpha(0.12);
+
+  HorizontalLayout {
+    padding: 16px;
+    spacing: 14px;
+    cross-axis-alignment: center;
+
+    VerticalLayout {
+      horizontal-stretch: 1;
+      alignment: center;
+      spacing: 3px;
+
+      Text {
+        text: root.title;
+        color: Palette.foreground;
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      Text {
+        text: root.subtitle;
+        color: Palette.foreground.with-alpha(0.6);
+        font-size: 12px;
+        overflow: elide;
+      }
+    }
+
+    Image {
+      source: @image-url("../images/icons/arrow-right.svg");
+      width: 16px;
+      height: 16px;
+      colorize: Palette.foreground.with-alpha(0.45);
+    }
+  }
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      root.clicked();
+    }
+  }
+}
+
+// 创建实例弹窗：安装新实例 / 选版本 / 选加载器 / 命名
+component CreateInstanceDialog inherits Rectangle {
+  in-out property <VersionFilter> version-filter: VersionFilter.release;
+  in-out property <string> name-input: "";
+  in-out property <string> source-message: "";
+
+  callback close();
+
+  background: transparent;
+
+  ModalCard {
+    card-width: 760px;
+    card-height: AppState.add-step == "versions" || AppState.add-step == "loader-version"
+      ? 480px
+      : AppState.add-step == "loader"
+        ? 400px
+        : AppState.add-step == "source"
+          ? 420px
+          : 320px;
+    close-enabled: !AppState.installing;
+    close => {
+      root.close();
+    }
+
+    VerticalLayout {
+      padding: 20px;
+      spacing: 12px;
+
+      // ---- 标题 ----
+      if AppState.add-step == "source" : VerticalLayout {
+        spacing: 3px;
+
+        Text {
+          text: "创建新实例";
+          color: Palette.foreground;
+          font-size: 20px;
+          font-weight: 600;
+        }
+
+        Text {
+          text: "先选择创建方式；当前版本支持安装新实例。";
+          color: Palette.foreground.with-alpha(0.62);
+          font-size: 12px;
+        }
+      }
+
+      if AppState.add-step == "versions" : WizardHeader {
+        title: "选择 Minecraft 版本";
+        subtitle: root.add-subtitle();
+        back => {
+          if (!AppState.installing) {
+            Actions.go-back();
+          }
+        }
+      }
+
+      if AppState.add-step == "loader" : WizardHeader {
+        title: "选择模组加载器";
+        subtitle: "Minecraft " + AppState.pending-version + " · 不需要加载器可以直接跳过";
+        back => {
+          if (!AppState.installing) {
+            Actions.go-back();
+          }
+        }
+      }
+
+      if AppState.add-step == "loader-version" : WizardHeader {
+        title: AppState.pending-loader == "fabric"
+          ? "选择 Fabric 版本"
+          : "选择 Forge 版本";
+        subtitle: "Minecraft " + AppState.pending-version;
+        back => {
+          if (!AppState.installing) {
+            Actions.go-back();
+          }
+        }
+      }
+
+      if AppState.add-step == "name" : WizardHeader {
+        title: "实例名称";
+        subtitle: "实例会保存到 versions/<名称>";
+        back => {
+          if (!AppState.installing) {
+            Actions.go-back();
+          }
+        }
+      }
+
+      if AppState.add-step == "done" : VerticalLayout {
+        spacing: 3px;
+
+        Text {
+          text: "创建完成";
+          color: Palette.foreground;
+          font-size: 20px;
+          font-weight: 600;
+        }
+
+        Text {
+          text: "新实例已经出现在左侧实例列表中。";
+          color: Palette.foreground.with-alpha(0.62);
+          font-size: 12px;
+        }
+      }
+
+      // ---- 内容 ----
+      if AppState.add-step == "source" : VerticalLayout {
+        vertical-stretch: 1;
+        spacing: 10px;
+
+        CreateSourceCard {
+          title: "安装新实例";
+          subtitle: "选择 Minecraft 版本，再安装原版 / Fabric / Forge";
+          clicked => {
+            root.source-message = "";
+            Actions.start-new-instance();
+            if (AppState.versions.length == 0 && !AppState.versions-loading) {
+              Actions.refresh-versions();
+            }
+          }
+        }
+
+        CreateSourceCard {
+          title: "导入整合包";
+          subtitle: "从 .mrpack / CurseForge 整合包创建实例（即将支持）";
+          clicked => {
+            root.source-message = "整合包导入尚未实现，请先使用「安装新实例」。";
+          }
+        }
+
+        if root.source-message != "" : MessageStrip {
+          message: root.source-message;
+          ok: false;
+        }
+
+        Rectangle {
+          vertical-stretch: 1;
+        }
+      }
+
+      if AppState.add-step == "versions" : VerticalLayout {
+        vertical-stretch: 1;
+        spacing: 10px;
+
+        HorizontalLayout {
+          spacing: 6px;
+          cross-axis-alignment: center;
+
+          FilterPill {
+            label: "正式版";
+            selected: root.version-filter == VersionFilter.release;
+            clicked => {
+              root.apply-filter(VersionFilter.release, "release");
+            }
+          }
+
+          FilterPill {
+            label: "快照版";
+            selected: root.version-filter == VersionFilter.snapshot;
+            clicked => {
+              root.apply-filter(VersionFilter.snapshot, "snapshot");
+            }
+          }
+
+          FilterPill {
+            label: "愚人节";
+            selected: root.version-filter == VersionFilter.fools;
+            clicked => {
+              root.apply-filter(VersionFilter.fools, "fools");
+            }
+          }
+
+          FilterPill {
+            label: "全部";
+            selected: root.version-filter == VersionFilter.all;
+            clicked => {
+              root.apply-filter(VersionFilter.all, "all");
+            }
+          }
+
+          Rectangle {
+            horizontal-stretch: 1;
+          }
+
+          Text {
+            text: AppState.versions-summary;
+            color: Palette.foreground.with-alpha(0.5);
+            font-size: 12px;
+            vertical-alignment: center;
+          }
+
+          RefreshButton {
+            loading: AppState.versions-loading;
+            clicked => {
+              Actions.refresh-versions();
+            }
+          }
+        }
+
+        if AppState.versions-error != "" : MessageStrip {
+          message: AppState.versions-error;
+          ok: false;
+        }
+
+        ListPanel {
+          vertical-stretch: 1;
+
+          ListView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+
+            for version in AppState.versions : VersionRow {
+              version-id: version.version-id;
+              kind: version.kind;
+              kind-label: version.kind-label;
+              is-fools: version.is-fools;
+              release-date: version.release-date;
+              choose => {
+                Actions.choose-version(version.version-id);
+              }
+            }
+          }
+
+          if AppState.versions.length == 0 : EmptyHint {
+            text: AppState.versions-loading
+              ? "正在获取版本列表…"
+              : "没有可显示的版本，点右上角刷新试试";
+          }
+        }
+      }
+
+      if AppState.add-step == "loader" : VerticalLayout {
+        vertical-stretch: 1;
+        spacing: 10px;
+
+        LoaderCard {
+          title: "Fabric";
+          subtitle: "轻量、更新快，适合大多数模组";
+          mark: "F";
+          has-icon: true;
+          icon: @image-url("../images/icons/mc/mod_loader/fabric.png");
+          clicked => {
+            Actions.choose-loader("fabric");
+          }
+        }
+
+        LoaderCard {
+          title: "Forge";
+          subtitle: "兼容性广，安装时需要本机已有 Java";
+          mark: "F";
+          has-icon: true;
+          icon: @image-url("../images/icons/mc/mod_loader/forge.png");
+          clicked => {
+            Actions.choose-loader("forge");
+          }
+        }
+
+        LoaderCard {
+          title: "跳过";
+          subtitle: "只安装原版 Minecraft";
+          mark: "→";
+          has-icon: false;
+          clicked => {
+            Actions.choose-loader("");
+          }
+        }
+
+        Rectangle {
+          vertical-stretch: 1;
+        }
+      }
+
+      if AppState.add-step == "loader-version" : VerticalLayout {
+        vertical-stretch: 1;
+        spacing: 10px;
+
+        if AppState.loader-versions-error != "" : MessageStrip {
+          message: AppState.loader-versions-error;
+          ok: false;
+        }
+
+        ListPanel {
+          vertical-stretch: 1;
+
+          ListView {
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+
+            for item in AppState.loader-versions : LoaderVersionRow {
+              version: item.version;
+              stable: item.stable;
+              choose => {
+                Actions.choose-loader-version(item.version);
+              }
+            }
+          }
+
+          if AppState.loader-versions-loading : EmptyHint {
+            text: "正在获取可用版本…";
+          }
+
+          if !AppState.loader-versions-loading
+            && AppState.loader-versions.length == 0
+            && AppState.loader-versions-error == "" : EmptyHint {
+            text: "这个 Minecraft 版本没有可用的加载器版本";
+          }
+        }
+      }
+
+      if AppState.add-step == "name" : VerticalLayout {
+        vertical-stretch: 1;
+        spacing: 10px;
+
+        Rectangle {
+          height: 56px;
+          border-radius: 6px;
+          background: Palette.foreground.with-alpha(0.04);
+          border-width: 1px;
+          border-color: Palette.foreground.with-alpha(0.10);
+
+          HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            spacing: 10px;
+            cross-axis-alignment: center;
+
+            Text {
+              text: "Minecraft " + AppState.pending-version;
+              color: Palette.foreground;
+              font-size: 13px;
+              font-weight: 600;
+              vertical-alignment: center;
+            }
+
+            if AppState.pending-loader != "" : Tag {
+              label: AppState.pending-loader == "fabric"
+                ? "Fabric " + AppState.pending-loader-version
+                : "Forge " + AppState.pending-loader-version;
+            }
+
+            Rectangle {
+              horizontal-stretch: 1;
+            }
+
+            if AppState.pending-loader == "" : Text {
+              text: "原版";
+              color: Palette.foreground.with-alpha(0.5);
+              font-size: 12px;
+              vertical-alignment: center;
+            }
+          }
+        }
+
+        LineEdit {
+          placeholder-text: "例如 1.20.1-fabric";
+          text <=> root.name-input;
+          accepted => {
+            if (!AppState.installing) {
+              Actions.create-instance(root.name-input);
+            }
+          }
+          init => {
+            root.name-input = AppState.instance-name;
+            self.focus();
+          }
+        }
+
+        if AppState.install-message != "" : MessageStrip {
+          message: AppState.install-message;
+          ok: AppState.install-ok;
+        }
+
+        Rectangle {
+          vertical-stretch: 1;
+        }
+      }
+
+      if AppState.add-step == "done" : VerticalLayout {
+        vertical-stretch: 1;
+        spacing: 10px;
+
+        Rectangle {
+          border-radius: 6px;
+          background: Palette.accent-background.with-alpha(0.10);
+          border-width: 1px;
+          border-color: Palette.accent-background.with-alpha(0.30);
+
+          VerticalLayout {
+            padding: 16px;
+            spacing: 8px;
+
+            Text {
+              text: "实例「" + AppState.instance-name + "」";
+              color: Palette.foreground;
+              font-size: 15px;
+              font-weight: 600;
+            }
+
+            Text {
+              text: AppState.install-message;
+              color: Palette.foreground.with-alpha(0.7);
+              font-size: 12px;
+              wrap: word-wrap;
+            }
+          }
+        }
+
+        Rectangle {
+          vertical-stretch: 1;
+        }
+      }
+
+      if AppState.installing : InstallStrip { }
+
+      // ---- 底部按钮 ----
+      HorizontalLayout {
+        alignment: end;
+        spacing: 8px;
+
+        if AppState.add-step != "done" : DialogActionButton {
+          label: AppState.installing ? "安装中…" : "取消";
+          enabled: !AppState.installing;
+          clicked => {
+            root.close();
+          }
+        }
+
+        if AppState.add-step == "name" : DialogActionButton {
+          label: AppState.installing ? "创建中…" : "创建实例";
+          primary: true;
+          enabled: !AppState.installing;
+          clicked => {
+            Actions.create-instance(root.name-input);
+          }
+        }
+
+        if AppState.add-step == "done" : DialogActionButton {
+          label: "再创建一个";
+          clicked => {
+            root.source-message = "";
+            Actions.reset-add-instance();
+          }
+        }
+
+        if AppState.add-step == "done" : DialogActionButton {
+          label: "完成";
+          primary: true;
+          clicked => {
+            root.close();
+          }
+        }
+      }
+    }
+  }
+
+  function add-subtitle() -> string {
+    if (AppState.latest-release == "") {
+      return "从 Mojang 官方源下载并安装 Minecraft";
+    }
+    return "最新正式版 " + AppState.latest-release + "  ·  最新快照 " + AppState.latest-snapshot;
+  }
+
+  function apply-filter(value: VersionFilter, key: string) {
+    root.version-filter = value;
+    Actions.filter-versions(key);
+  }
+}
+
+// 实例详情里的模组加载器信息条
+component InstanceLoaderStrip inherits Rectangle {
+  in property <string> loader;
+  in property <string> loader-name;
+  in property <string> loader-version;
+  in property <string> game-version;
+  in property <bool> can-switch;
+
+  callback clicked();
+
+  height: 60px;
+  border-radius: 6px;
+  background: touch.has-hover && root.can-switch
+    ? Palette.foreground.with-alpha(0.08)
+    : Palette.foreground.with-alpha(0.04);
+  border-width: 1px;
+  border-color: root.can-switch
+    ? Palette.accent-background.with-alpha(0.28)
+    : Palette.foreground.with-alpha(0.08);
+
+  HorizontalLayout {
+    padding-left: 10px;
+    padding-right: 10px;
+    spacing: 10px;
+    cross-axis-alignment: center;
+
+    Rectangle {
+      width: 34px;
+      height: 34px;
+      border-radius: 7px;
+      clip: true;
+      background: Palette.foreground.with-alpha(0.06);
+
+      if root.loader == "fabric" : Image {
+        source: @image-url("../images/icons/mc/mod_loader/fabric.png");
+        width: 100%;
+        height: 100%;
+        image-fit: contain;
+      }
+
+      if root.loader == "forge" : Image {
+        source: @image-url("../images/icons/mc/mod_loader/forge.png");
+        width: 100%;
+        height: 100%;
+        image-fit: contain;
+      }
+
+      if root.loader != "fabric" && root.loader != "forge" : Image {
+        source: @image-url("../images/icons/instance.svg");
+        width: 18px;
+        height: 18px;
+        colorize: Palette.foreground.with-alpha(0.5);
+      }
+    }
+
+    VerticalLayout {
+      horizontal-stretch: 1;
+      alignment: center;
+      spacing: 1px;
+
+      Text {
+        text: "模组加载器" + (root.game-version != ""
+          ? "  ·  Minecraft " + root.game-version
+          : "");
+        color: Palette.foreground.with-alpha(0.55);
+        font-size: 10px;
+        overflow: elide;
+      }
+
+      Text {
+        text: root.loader-version == ""
+          ? root.loader-name
+          : root.loader-name + " " + root.loader-version;
+        color: Palette.foreground;
+        font-size: 13px;
+        font-weight: 600;
+        overflow: elide;
+      }
+    }
+
+    if root.can-switch : HorizontalLayout {
+      spacing: 3px;
+      cross-axis-alignment: center;
+
+      Text {
+        text: "切换";
+        color: Palette.accent-background;
+        font-size: 11px;
+        vertical-alignment: center;
+      }
+
+      Image {
+        source: @image-url("../images/icons/arrow-right.svg");
+        width: 12px;
+        height: 12px;
+        colorize: Palette.accent-background;
+      }
+    }
+
+    if !root.can-switch : Text {
+      text: root.loader == "" ? "无加载器" : "不可切换";
+      color: Palette.foreground.with-alpha(0.4);
+      font-size: 10px;
+      vertical-alignment: center;
+    }
+  }
+
+  touch := TouchArea {
+    mouse-cursor: root.can-switch ? pointer : default;
+    clicked => {
+      if (root.can-switch) {
+        root.clicked();
+      }
+    }
+  }
+}
+
+// 实例详情里的加载器版本切换弹窗
+component LoaderSwitchDialog inherits Rectangle {
+  in property <string> instance;
+
+  callback close();
+
+  background: transparent;
+
+  ModalCard {
+    card-width: 560px;
+    card-height: 480px;
+    close-enabled: !AppState.switching-loader;
+    close => {
+      root.close();
+    }
+
+    VerticalLayout {
+      padding: 20px;
+      spacing: 12px;
+
+      Text {
+        text: "切换 " + AppState.instance-loader-name + " 版本";
+        color: Palette.foreground;
+        font-size: 20px;
+        font-weight: 600;
+      }
+
+      Text {
+        text: "Minecraft " + AppState.instance-game-version + " · 当前 "
+          + AppState.instance-loader-version;
+        color: Palette.foreground.with-alpha(0.62);
+        font-size: 12px;
+      }
+
+      if AppState.loader-switch-message != "" : MessageStrip {
+        message: AppState.loader-switch-message;
+        ok: AppState.loader-switch-ok;
+      }
+
+      if AppState.loader-versions-error != "" : MessageStrip {
+        message: AppState.loader-versions-error;
+        ok: false;
+      }
+
+      ListPanel {
+        vertical-stretch: 1;
+        opacity: AppState.switching-loader ? 0.5 : 1.0;
+
+        ListView {
+          x: 0;
+          y: 0;
+          width: 100%;
+          height: 100%;
+
+          for item in AppState.loader-versions : LoaderVersionRow {
+            version: item.version;
+            stable: item.stable;
+            selected: item.version == AppState.instance-loader-version;
+
+            choose => {
+              if (!AppState.switching-loader
+                && !AppState.loader-switch-ok
+                && item.version != AppState.instance-loader-version) {
+                Actions.switch-instance-loader(
+                  root.instance,
+                  AppState.instance-game-version,
+                  AppState.instance-loader,
+                  item.version
+                );
+              }
+            }
+          }
+        }
+
+        if AppState.loader-versions-loading : EmptyHint {
+          text: "正在获取可用版本…";
+        }
+
+        if !AppState.loader-versions-loading
+          && AppState.loader-versions.length == 0
+          && AppState.loader-versions-error == "" : EmptyHint {
+          text: "没有可切换的版本";
+        }
+      }
+
+      if AppState.switching-loader : InstallStrip { }
+
+      HorizontalLayout {
+        alignment: end;
+        spacing: 8px;
+
+        if AppState.loader-switch-ok : DialogActionButton {
+          label: "完成";
+          primary: true;
+          clicked => {
+            root.close();
+          }
+        }
+
+        if !AppState.loader-switch-ok : DialogActionButton {
+          label: "取消";
+          enabled: !AppState.switching-loader;
+          clicked => {
+            root.close();
+          }
+        }
+      }
+    }
+  }
+}
+
 export component InstancesView inherits Rectangle {
   in-out property <string> selected-instance: "";
   in-out property <string> selected-instance-path: "";
   in-out property <InstanceTab> current-tab: InstanceTab.home;
   in-out property <VersionFilter> version-filter: VersionFilter.release;
-  in-out property <bool> show-add: false;
-  // 向导“实例名称”步骤的输入框（由 AppState.instance-name 预填）
-  in-out property <string> name-input: "";
+  in-out property <bool> show-create-dialog: false;
+  in-out property <bool> show-loader-switch: false;
+  /// 实例内容下载弹窗
+  in-out property <bool> show-download-dialog: false;
+  /// 下载弹窗当前内容类别（mod / resourcepack / shader）
+  in-out property <string> download-kind: "";
+  /// 下载弹窗独立保存的搜索词
+  in-out property <string> download-search: "";
+  /// 实例内容更新弹窗
+  in-out property <bool> show-update-dialog: false;
 
   background: transparent;
+
+  /// 打开“下载到实例”弹窗，并切到对应内容类别。
+  function open-download-dialog(kind: string) {
+    Actions.set-download-target(root.selected-instance-path);
+    Actions.close-project();
+    root.download-kind = kind;
+    root.download-search = "";
+    Actions.open-instance-download(
+      kind,
+      AppState.instance-game-version,
+      AppState.instance-loader-name
+    );
+    root.show-download-dialog = true;
+  }
+
+  pure function download-filter-text() -> string {
+    if (AppState.instance-game-version == "") {
+      return "未按游戏版本筛选";
+    }
+    if (root.download-kind == "mod" && AppState.instance-loader-name != "原版") {
+      return "已按 " + AppState.instance-game-version + " · "
+        + AppState.instance-loader-name + " 筛选";
+    }
+    return "已按 " + AppState.instance-game-version + " 筛选";
+  }
+
+  /// 关闭下载弹窗，恢复默认下载目录并刷新实例内容。
+  function close-download-dialog() {
+    root.show-download-dialog = false;
+    Actions.set-download-target("");
+    Actions.close-project();
+    Actions.load-instance-content(root.selected-instance-path);
+  }
+
+  /// 打开更新弹窗并开始检查。
+  function open-update-dialog(folder: string, kind: string) {
+    root.show-update-dialog = true;
+    Actions.check-content-updates(root.selected-instance-path, folder, kind);
+  }
+
+  /// 关闭更新弹窗并刷新实例内容。
+  function close-update-dialog() {
+    root.show-update-dialog = false;
+    Actions.load-instance-content(root.selected-instance-path);
+  }
+
+  // 离开实例页时关闭下载 / 更新弹窗，避免下载目标残留到“发现”页。
+  changed visible => {
+    if (!self.visible && root.show-download-dialog) {
+      root.close-download-dialog();
+    }
+    if (!self.visible && root.show-update-dialog) {
+      root.close-update-dialog();
+    }
+  }
 
   function tab-title(tab: InstanceTab) -> string {
     if (tab == InstanceTab.home) {
@@ -1003,18 +1840,6 @@ export component InstancesView inherits Rectangle {
     return "光影";
   }
 
-  function add-subtitle() -> string {
-    if (AppState.latest-release == "") {
-      return "从 Mojang 官方源下载并安装 Minecraft 原版";
-    }
-    return "最新正式版 " + AppState.latest-release + "  ·  最新快照 " + AppState.latest-snapshot;
-  }
-
-  function apply-filter(value: VersionFilter, key: string) {
-    root.version-filter = value;
-    Actions.filter-versions(key);
-  }
-
   HorizontalLayout {
     padding: 16px;
     spacing: 16px;
@@ -1029,12 +1854,12 @@ export component InstancesView inherits Rectangle {
       InstanceMenuItem {
         label: "全部实例";
         icon: @image-url("../images/icons/boxes.svg");
-        selected: root.selected-instance == "" && !root.show-add;
+        selected: root.selected-instance == "" && !root.show-create-dialog;
         clicked => {
           root.selected-instance = "";
           root.selected-instance-path = "";
           root.current-tab = InstanceTab.home;
-          root.show-add = false;
+          root.show-create-dialog = false;
           Actions.load-instance-content("");
         }
       }
@@ -1047,7 +1872,7 @@ export component InstancesView inherits Rectangle {
           root.selected-instance = instance.name;
           root.selected-instance-path = instance.path;
           root.current-tab = InstanceTab.home;
-          root.show-add = false;
+          root.show-create-dialog = false;
           Actions.load-instance-content(instance.path);
         }
       }
@@ -1057,13 +1882,13 @@ export component InstancesView inherits Rectangle {
       }
 
       InstanceMenuItem {
-        label: "添加实例";
+        label: "创建新实例";
         icon: @image-url("../images/icons/plus-circle.svg");
-        selected: root.show-add;
+        selected: root.show-create-dialog;
         clicked => {
-          root.show-add = true;
+          root.show-create-dialog = true;
           root.selected-instance = "";
-          root.name-input = "";
+          root.selected-instance-path = "";
           Actions.reset-add-instance();
         }
       }
@@ -1073,420 +1898,7 @@ export component InstancesView inherits Rectangle {
       horizontal-stretch: 1;
       background: transparent;
 
-      if root.show-add : VerticalLayout {
-        padding: 16px;
-        spacing: 10px;
-
-        // ---- 第 1 步：选择原版版本 ----
-        if AppState.add-step == "versions" : VerticalLayout {
-          spacing: 10px;
-          vertical-stretch: 1;
-
-          HorizontalLayout {
-            spacing: 10px;
-            cross-axis-alignment: center;
-
-            VerticalLayout {
-              horizontal-stretch: 1;
-              alignment: center;
-              spacing: 2px;
-
-              Text {
-                text: "添加实例";
-                color: Palette.foreground;
-                font-size: 18px;
-                font-weight: 600;
-              }
-
-              Text {
-                text: root.add-subtitle();
-                color: Palette.foreground.with-alpha(0.65);
-                font-size: 13px;
-                overflow: elide;
-              }
-            }
-
-            HorizontalLayout {
-              spacing: 4px;
-
-              FilterPill {
-                label: "正式版";
-                selected: root.version-filter == VersionFilter.release;
-                clicked => {
-                  root.apply-filter(VersionFilter.release, "release");
-                }
-              }
-
-              FilterPill {
-                label: "快照版";
-                selected: root.version-filter == VersionFilter.snapshot;
-                clicked => {
-                  root.apply-filter(VersionFilter.snapshot, "snapshot");
-                }
-              }
-
-              FilterPill {
-                label: "全部";
-                selected: root.version-filter == VersionFilter.all;
-                clicked => {
-                  root.apply-filter(VersionFilter.all, "all");
-                }
-              }
-            }
-
-            Rectangle {
-              height: 32px;
-              min-width: 84px;
-              horizontal-stretch: 0;
-              border-radius: 6px;
-              opacity: AppState.versions-loading ? 0.5 : 1.0;
-              background: refresh-touch.has-hover
-                ? Palette.foreground.with-alpha(0.06)
-                : transparent;
-
-              HorizontalLayout {
-                padding-left: 10px;
-                padding-right: 12px;
-                spacing: 6px;
-                alignment: center;
-                cross-axis-alignment: center;
-
-                Image {
-                  source: @image-url("../images/icons/arrow-repeat.svg");
-                  width: 16px;
-                  height: 16px;
-                  colorize: Palette.foreground.with-alpha(0.72);
-                }
-
-                Text {
-                  text: AppState.versions-loading ? "获取中…" : "刷新";
-                  color: Palette.foreground;
-                  font-size: 12px;
-                  vertical-alignment: center;
-                }
-              }
-
-              refresh-touch := TouchArea {
-                mouse-cursor: pointer;
-                clicked => {
-                  if (!AppState.versions-loading) {
-                    Actions.refresh-versions();
-                  }
-                }
-              }
-            }
-          }
-
-          if AppState.installing : InstallStrip { }
-
-          if AppState.install-message != "" : MessageStrip {
-            message: AppState.install-message;
-            ok: AppState.install-ok;
-          }
-
-          if AppState.versions-error != "" : MessageStrip {
-            message: AppState.versions-error;
-            ok: false;
-          }
-
-          Rectangle {
-            vertical-stretch: 1;
-            border-radius: 6px;
-            background: Palette.background.with-alpha(0.5);
-            border-width: 1px;
-            border-color: Palette.foreground.with-alpha(0.08);
-            clip: true;
-
-            ListView {
-              x: 0;
-              y: 0;
-              width: 100%;
-              height: 100%;
-
-              for version in AppState.versions : VersionRow {
-                version-id: version.version-id;
-                kind-label: version.kind-label;
-                release-date: version.release-date;
-                installing: AppState.installing
-                  && AppState.installing-version == version.version-id;
-                busy: AppState.installing;
-                install => {
-                  Actions.choose-version(version.version-id);
-                }
-              }
-            }
-
-            if AppState.versions.length == 0 : Text {
-              x: 0;
-              y: 0;
-              width: 100%;
-              height: 100%;
-              text: AppState.versions-loading
-                ? "正在获取版本列表…"
-                : "没有可显示的版本，点右上角刷新试试";
-              color: Palette.foreground.with-alpha(0.45);
-              font-size: 13px;
-              horizontal-alignment: center;
-              vertical-alignment: center;
-            }
-          }
-        }
-
-        // ---- 第 2 步：选择模组加载器 ----
-        if AppState.add-step == "loader" : VerticalLayout {
-          spacing: 10px;
-          vertical-stretch: 1;
-
-          WizardHeader {
-            title: "选择模组加载器";
-            subtitle: "Minecraft " + AppState.pending-version + " · 不需要加载器可以直接跳过";
-            back => {
-              Actions.go-back();
-            }
-          }
-
-          if AppState.installing : InstallStrip { }
-
-          if AppState.install-message != "" : MessageStrip {
-            message: AppState.install-message;
-            ok: AppState.install-ok;
-          }
-
-          LoaderCard {
-            title: "Fabric";
-            subtitle: "轻量、更新快，适合大多数模组";
-            mark: "F";
-            clicked => {
-              Actions.choose-loader("fabric");
-            }
-          }
-
-          LoaderCard {
-            title: "Forge";
-            subtitle: "兼容性广，安装时需要本机已有 Java";
-            mark: "F";
-            clicked => {
-              Actions.choose-loader("forge");
-            }
-          }
-
-          LoaderCard {
-            title: "跳过";
-            subtitle: "只安装原版 Minecraft";
-            mark: "→";
-            clicked => {
-              Actions.choose-loader("");
-            }
-          }
-
-          Rectangle {
-            vertical-stretch: 1;
-          }
-        }
-
-        // ---- 第 3 步：选择加载器版本 ----
-        if AppState.add-step == "loader-version" : VerticalLayout {
-          spacing: 10px;
-          vertical-stretch: 1;
-
-          WizardHeader {
-            title: AppState.pending-loader == "fabric"
-              ? "选择 Fabric 版本"
-              : "选择 Forge 版本";
-            subtitle: "Minecraft " + AppState.pending-version;
-            back => {
-              Actions.go-back();
-            }
-          }
-
-          if AppState.install-message != "" : MessageStrip {
-            message: AppState.install-message;
-            ok: AppState.install-ok;
-          }
-
-          if AppState.loader-versions-error != "" : MessageStrip {
-            message: AppState.loader-versions-error;
-            ok: false;
-          }
-
-          Rectangle {
-            vertical-stretch: 1;
-            border-radius: 6px;
-            background: Palette.background.with-alpha(0.5);
-            border-width: 1px;
-            border-color: Palette.foreground.with-alpha(0.08);
-            clip: true;
-
-            ListView {
-              x: 0;
-              y: 0;
-              width: 100%;
-              height: 100%;
-
-              for item in AppState.loader-versions : LoaderVersionRow {
-                version: item.version;
-                stable: item.stable;
-                choose => {
-                  Actions.choose-loader-version(item.version);
-                }
-              }
-            }
-
-            if AppState.loader-versions-loading : Text {
-              x: 0;
-              y: 0;
-              width: 100%;
-              height: 100%;
-              text: "正在获取可用版本…";
-              color: Palette.foreground.with-alpha(0.45);
-              font-size: 13px;
-              horizontal-alignment: center;
-              vertical-alignment: center;
-            }
-
-            if !AppState.loader-versions-loading
-              && AppState.loader-versions.length == 0
-              && AppState.loader-versions-error == "" : Text {
-              x: 0;
-              y: 0;
-              width: 100%;
-              height: 100%;
-              text: "这个 Minecraft 版本没有可用的加载器版本";
-              color: Palette.foreground.with-alpha(0.45);
-              font-size: 13px;
-              horizontal-alignment: center;
-              vertical-alignment: center;
-            }
-          }
-        }
-
-        // ---- 第 4 步：实例名称 ----
-        if AppState.add-step == "name" : VerticalLayout {
-          spacing: 10px;
-          vertical-stretch: 1;
-
-          WizardHeader {
-            title: "实例名称";
-            subtitle: "实例会保存到 versions/<名称>";
-            back => {
-              Actions.go-back();
-            }
-          }
-
-          Rectangle {
-            height: 56px;
-            border-radius: 6px;
-            background: Palette.foreground.with-alpha(0.04);
-            border-width: 1px;
-            border-color: Palette.foreground.with-alpha(0.10);
-
-            HorizontalLayout {
-              padding-left: 14px;
-              padding-right: 14px;
-              spacing: 10px;
-              cross-axis-alignment: center;
-
-              Text {
-                text: "Minecraft " + AppState.pending-version;
-                color: Palette.foreground;
-                font-size: 13px;
-                font-weight: 600;
-                vertical-alignment: center;
-              }
-
-              if AppState.pending-loader != "" : Rectangle {
-                height: 20px;
-                border-radius: 6px;
-                background: #dbeafe;
-
-                HorizontalLayout {
-                  padding-left: 6px;
-                  padding-right: 6px;
-                  alignment: center;
-                  cross-axis-alignment: center;
-
-                  Text {
-                    text: AppState.pending-loader == "fabric"
-                      ? "Fabric " + AppState.pending-loader-version
-                      : "Forge " + AppState.pending-loader-version;
-                    color: #1e40af;
-                    font-size: 11px;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                  }
-                }
-              }
-
-              Rectangle {
-                horizontal-stretch: 1;
-              }
-
-              if AppState.pending-loader == "" : Text {
-                text: "原版";
-                color: Palette.foreground.with-alpha(0.5);
-                font-size: 12px;
-                vertical-alignment: center;
-              }
-            }
-          }
-
-          LineEdit {
-            placeholder-text: "例如 1.20.1-fabric";
-            text <=> root.name-input;
-            accepted => {
-              Actions.create-instance(root.name-input);
-            }
-            init => {
-              root.name-input = AppState.instance-name;
-              self.focus();
-            }
-          }
-
-          if AppState.installing : InstallStrip { }
-
-          if AppState.install-message != "" : MessageStrip {
-            message: AppState.install-message;
-            ok: AppState.install-ok;
-          }
-
-          Rectangle {
-            height: 36px;
-            min-width: 110px;
-            horizontal-stretch: 0;
-            border-radius: 6px;
-            opacity: AppState.installing ? 0.4 : 1.0;
-            border-width: 1px;
-            border-color: Palette.accent-background.with-alpha(0.55);
-            background: create-touch.has-hover && !AppState.installing
-              ? Palette.accent-background.with-alpha(0.30)
-              : Palette.accent-background.with-alpha(0.18);
-
-            Text {
-              text: AppState.installing ? "创建中…" : "创建实例";
-              color: Palette.accent-background;
-              font-size: 13px;
-              font-weight: 600;
-              horizontal-alignment: center;
-              vertical-alignment: center;
-            }
-
-            create-touch := TouchArea {
-              mouse-cursor: pointer;
-              clicked => {
-                if (!AppState.installing) {
-                  Actions.create-instance(root.name-input);
-                }
-              }
-            }
-          }
-
-          Rectangle {
-            vertical-stretch: 1;
-          }
-        }
-      }
-
-      if !root.show-add && root.selected-instance == "" : VerticalLayout {
+      if root.selected-instance == "" : VerticalLayout {
         padding: 16px;
         spacing: 8px;
 
@@ -1518,7 +1930,7 @@ export component InstancesView inherits Rectangle {
               root.selected-instance = instance.name;
               root.selected-instance-path = instance.path;
               root.current-tab = InstanceTab.home;
-              root.show-add = false;
+              root.show-create-dialog = false;
               Actions.load-instance-content(instance.path);
             }
           }
@@ -1529,7 +1941,7 @@ export component InstancesView inherits Rectangle {
         }
       }
 
-      if !root.show-add && root.selected-instance != "" : VerticalLayout {
+      if root.selected-instance != "" : VerticalLayout {
         padding: 16px;
         spacing: 10px;
 
@@ -1632,7 +2044,7 @@ export component InstancesView inherits Rectangle {
 
           InstanceTabItem {
             label: "模组";
-            icon: @image-url("../images/icons/puzzle.svg");
+            icon: @image-url("../images/icons/mod.svg");
             selected: root.current-tab == InstanceTab.mods;
             clicked => {
               root.current-tab = InstanceTab.mods;
@@ -1674,15 +2086,54 @@ export component InstancesView inherits Rectangle {
           shader-packs-count: AppState.shader-packs.length;
         }
 
-        if root.current-tab == InstanceTab.mods : ContentPanel {
+        if root.current-tab == InstanceTab.mods : VerticalLayout {
           vertical-stretch: 1;
-          title: "模组";
-          empty-text: "未安装模组";
-          empty-hint: "将 .jar 文件放入实例的 mods 文件夹";
-          instance-path: root.selected-instance-path;
-          folder-name: "mods";
-          icon: @image-url("../images/icons/puzzle.svg");
-          items: AppState.mods;
+          spacing: 8px;
+
+          HorizontalLayout {
+            spacing: 8px;
+
+            InstanceLoaderStrip {
+              width: 360px;
+              horizontal-stretch: 0;
+              loader: AppState.instance-loader;
+              loader-name: AppState.instance-loader-name;
+              loader-version: AppState.instance-loader-version;
+              game-version: AppState.instance-game-version;
+              can-switch: AppState.instance-game-version != ""
+                && (AppState.instance-loader == "fabric"
+                  || AppState.instance-loader == "forge");
+
+              clicked => {
+                root.show-loader-switch = true;
+                Actions.refresh-instance-loader-versions(
+                  AppState.instance-game-version,
+                  AppState.instance-loader
+                );
+              }
+            }
+
+            Rectangle {
+              horizontal-stretch: 1;
+            }
+          }
+
+          ContentPanel {
+            vertical-stretch: 1;
+            title: "模组";
+            empty-text: "未安装模组";
+            empty-hint: "将 .jar 文件放入实例的 mods 文件夹";
+            instance-path: root.selected-instance-path;
+            folder-name: "mods";
+            icon: @image-url("../images/icons/mod.svg");
+            items: AppState.mods;
+            download => {
+              root.open-download-dialog("mod");
+            }
+            check-updates => {
+              root.open-update-dialog("mods", "mod");
+            }
+          }
         }
 
         if root.current-tab == InstanceTab.resource-packs : ContentPanel {
@@ -1694,6 +2145,12 @@ export component InstancesView inherits Rectangle {
           folder-name: "resourcepacks";
           icon: @image-url("../images/icons/resource.svg");
           items: AppState.resource-packs;
+          download => {
+            root.open-download-dialog("resourcepack");
+          }
+          check-updates => {
+            root.open-update-dialog("resourcepacks", "resourcepack");
+          }
         }
 
         if root.current-tab == InstanceTab.shaders : ContentPanel {
@@ -1705,6 +2162,12 @@ export component InstancesView inherits Rectangle {
           folder-name: "shaderpacks";
           icon: @image-url("../images/icons/shader.svg");
           items: AppState.shader-packs;
+          download => {
+            root.open-download-dialog("shader");
+          }
+          check-updates => {
+            root.open-update-dialog("shaderpacks", "shader");
+          }
         }
 
         if root.current-tab == InstanceTab.worlds : PlaceholderPanel {
@@ -1717,6 +2180,215 @@ export component InstancesView inherits Rectangle {
           title: "原理图";
         }
       }
+    }
+  }
+
+  if root.show-create-dialog : CreateInstanceDialog {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+
+    version-filter <=> root.version-filter;
+
+    close => {
+      root.show-create-dialog = false;
+    }
+  }
+
+  if root.show-loader-switch : LoaderSwitchDialog {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+
+    instance: root.selected-instance;
+
+    close => {
+      root.show-loader-switch = false;
+      Actions.load-instance-content(root.selected-instance-path);
+    }
+  }
+
+  if root.show-download-dialog : ModalCard {
+    card-width: root.width * 0.92;
+    card-height: root.height * 0.90;
+    card-clip: true;
+    close => {
+      root.close-download-dialog();
+    }
+
+    VerticalLayout {
+      padding: 12px;
+      spacing: 8px;
+
+        HorizontalLayout {
+          spacing: 8px;
+          cross-axis-alignment: center;
+
+          VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+
+            Text {
+              text: "下载内容到实例";
+              color: Palette.foreground;
+              font-size: 17px;
+              font-weight: 600;
+            }
+
+            Text {
+              text: root.selected-instance + " · " + root.download-filter-text();
+              color: Palette.foreground.with-alpha(0.55);
+              font-size: 12px;
+              overflow: elide;
+            }
+          }
+
+          DialogActionButton {
+            label: "关闭";
+            clicked => {
+              root.close-download-dialog();
+            }
+          }
+        }
+
+        DiscoverView {
+          vertical-stretch: 1;
+          search-input <=> root.download-search;
+        }
+    }
+  }
+
+  if root.show-update-dialog : ModalCard {
+    card-width: 620px;
+    card-height: 520px;
+    card-clip: true;
+    close => {
+      root.close-update-dialog();
+    }
+
+    VerticalLayout {
+      padding: 18px;
+      spacing: 10px;
+
+        HorizontalLayout {
+          spacing: 8px;
+          cross-axis-alignment: center;
+
+          VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+
+            Text {
+              text: "检查内容更新";
+              color: Palette.foreground;
+              font-size: 17px;
+              font-weight: 600;
+            }
+
+            Text {
+              text: root.selected-instance + " · " + AppState.update-summary;
+              color: Palette.foreground.with-alpha(0.55);
+              font-size: 12px;
+              overflow: elide;
+            }
+          }
+
+          DialogActionButton {
+            label: "关闭";
+            clicked => {
+              root.close-update-dialog();
+            }
+          }
+        }
+
+        if AppState.update-error != "" : MessageStrip {
+          message: AppState.update-error;
+          ok: false;
+        }
+
+        if AppState.update-message != "" : MessageStrip {
+          message: AppState.update-message;
+          ok: AppState.update-ok;
+        }
+
+        if AppState.content-updates.length > 0 : ListView {
+          vertical-stretch: 1;
+
+          for update in AppState.content-updates : Rectangle {
+            height: 68px;
+            background: transparent;
+
+            Rectangle {
+              x: 0;
+              y: 4px;
+              width: 100%;
+              height: 60px;
+              border-radius: 6px;
+              background: Palette.foreground.with-alpha(0.05);
+              border-width: 1px;
+              border-color: Palette.foreground.with-alpha(0.10);
+
+              HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 10px;
+                spacing: 10px;
+                cross-axis-alignment: center;
+
+                VerticalLayout {
+                  horizontal-stretch: 1;
+                  alignment: center;
+                  spacing: 3px;
+
+                  Text {
+                    text: update.name;
+                    color: Palette.foreground;
+                    font-size: 13px;
+                    font-weight: 600;
+                    overflow: elide;
+                  }
+
+                  Text {
+                    text: update.current-version + " → " + update.new-version
+                      + " · " + update.source;
+                    color: Palette.accent-background;
+                    font-size: 12px;
+                    overflow: elide;
+                  }
+
+                  Text {
+                    text: update.file-name + " · " + update.size;
+                    color: Palette.foreground.with-alpha(0.42);
+                    font-size: 11px;
+                    overflow: elide;
+                  }
+                }
+
+                DialogActionButton {
+                  label: AppState.updating-content-key == update.key
+                    ? "更新中…"
+                    : "更新";
+                  primary: true;
+                  enabled: AppState.updating-content-key == "";
+                  clicked => {
+                    Actions.update-content(update.key);
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        if AppState.content-updates.length == 0 && !AppState.update-checking : Text {
+          text: AppState.update-summary;
+          color: Palette.foreground.with-alpha(0.45);
+          font-size: 13px;
+          horizontal-alignment: center;
+          vertical-alignment: center;
+          wrap: word-wrap;
+          vertical-stretch: 1;
+        }
     }
   }
 }

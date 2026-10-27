@@ -1,4 +1,5 @@
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,10 +17,23 @@ pub enum Skin {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrosoftAuth {
+    pub uuid: String,
+    /// Minecraft services access token.
+    pub access_token: String,
+    /// Microsoft OAuth refresh token.
+    pub refresh_token: String,
+    /// Unix timestamp (seconds) when the Minecraft access token expires.
+    pub expires_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account {
     pub name: String,
     pub kind: AccountKind,
     pub skin: Skin,
+    /// 仅 Microsoft 账号有；离线账号为 None。
+    pub microsoft: Option<MicrosoftAuth>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,17 +43,75 @@ pub struct Store {
     active: Option<String>,
 }
 
+/// `account.toml` 的顶层结构。
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct StoreFile {
+    #[serde(default)]
+    accounts: Vec<AccountFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct AccountFile {
+    name: String,
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    skin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    skin_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    microsoft: Option<MicrosoftAuthFile>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MicrosoftAuthFile {
+    #[serde(default)]
+    uuid: String,
+    #[serde(default)]
+    access_token: String,
+    #[serde(default)]
+    refresh_token: String,
+    #[serde(default)]
+    expires_at: u64,
+}
+
 impl Store {
     pub fn load_default() -> Self {
         Self::load(accounts_file())
     }
 
     pub fn load(path: PathBuf) -> Self {
-        let (accounts, active) = read_store(&path);
+        if path.is_file() {
+            let (accounts, active) = read_toml(&path);
+            return Self {
+                path,
+                accounts,
+                active,
+            };
+        }
+
+        // 从旧版 accounts.json 自动迁移一次；TOML 写成功后才删除旧文件。
+        let legacy = path.with_file_name("accounts.json");
+        if legacy.is_file()
+            && let Some((accounts, active)) = read_legacy_json(&legacy)
+        {
+            let store = Self {
+                path,
+                accounts,
+                active,
+            };
+            if store.save().is_ok() {
+                let _ = fs::remove_file(&legacy);
+            }
+            return store;
+        }
+
         Self {
             path,
-            accounts,
-            active,
+            accounts: Vec::new(),
+            active: None,
         }
     }
 
@@ -51,130 +123,234 @@ impl Store {
         self.active.as_deref()
     }
 
+    pub fn account(&self, name: &str) -> Option<&Account> {
+        self.index_of(name).map(|index| &self.accounts[index])
+    }
+
+    fn index_of(&self, name: &str) -> Option<usize> {
+        self.accounts
+            .iter()
+            .position(|account| account.name.eq_ignore_ascii_case(name))
+    }
+
+    pub fn active_account(&self) -> Option<&Account> {
+        self.active().and_then(|name| self.account(name))
+    }
+
+    /// 执行一次修改并保存；保存失败时恢复内存里的账号列表和当前账号。
+    fn update<T>(
+        &mut self,
+        apply: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let previous_accounts = self.accounts.clone();
+        let previous_active = self.active.clone();
+
+        let result = apply(self);
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                self.accounts = previous_accounts;
+                self.active = previous_active;
+                return Err(error);
+            }
+        };
+
+        if let Err(error) = self.save() {
+            self.accounts = previous_accounts;
+            self.active = previous_active;
+            return Err(error);
+        }
+
+        Ok(value)
+    }
+
     pub fn add_offline(&mut self, name: &str) -> Result<(), String> {
         validate_name(name)?;
-        if self
-            .accounts
-            .iter()
-            .any(|account| account.name.eq_ignore_ascii_case(name))
-        {
+        if self.account(name).is_some() {
             return Err("该角色名已存在".into());
         }
 
-        let previous_active = self.active.clone();
-        self.accounts.push(Account {
-            name: name.to_string(),
-            kind: AccountKind::Offline,
-            skin: Skin::Steve,
-        });
-        self.active = Some(name.to_string());
-
-        if let Err(error) = self.save() {
-            self.accounts.pop();
-            self.active = previous_active;
-            return Err(error);
-        }
-
-        Ok(())
+        self.update(|store| {
+            store.accounts.push(Account {
+                name: name.to_string(),
+                kind: AccountKind::Offline,
+                skin: Skin::Steve,
+                microsoft: None,
+            });
+            store.active = Some(name.to_string());
+            Ok(())
+        })
     }
 
     pub fn remove(&mut self, name: &str) -> Result<(), String> {
-        let previous_accounts = self.accounts.clone();
-        let previous_active = self.active.clone();
-
-        self.accounts
-            .retain(|account| !account.name.eq_ignore_ascii_case(name));
-        if self.accounts.len() == previous_accounts.len() {
+        if self.account(name).is_none() {
             return Err("未找到该角色".into());
         }
 
-        if self
-            .active
-            .as_deref()
-            .is_some_and(|active| active.eq_ignore_ascii_case(name))
-        {
-            self.active = self.accounts.first().map(|account| account.name.clone());
+        self.update(|store| {
+            store
+                .accounts
+                .retain(|account| !account.name.eq_ignore_ascii_case(name));
+
+            if store
+                .active
+                .as_deref()
+                .is_some_and(|active| active.eq_ignore_ascii_case(name))
+            {
+                store.active = store.accounts.first().map(|account| account.name.clone());
+            }
+            Ok(())
+        })
+    }
+
+    /// 登录成功后写入 / 更新 Microsoft 账号，并设为当前账号。
+    pub fn upsert_microsoft(
+        &mut self,
+        name: &str,
+        uuid: &str,
+        access_token: &str,
+        refresh_token: &str,
+        expires_at: u64,
+    ) -> Result<(), String> {
+        if name.trim().is_empty() {
+            return Err("Microsoft 账号名为空".into());
+        }
+        if uuid.trim().is_empty() {
+            return Err("Microsoft 账号 UUID 为空".into());
         }
 
-        if let Err(error) = self.save() {
-            self.accounts = previous_accounts;
-            self.active = previous_active;
-            return Err(error);
-        }
+        self.update(|store| {
+            let auth = MicrosoftAuth {
+                uuid: uuid.to_string(),
+                access_token: access_token.to_string(),
+                refresh_token: refresh_token.to_string(),
+                expires_at,
+            };
 
-        Ok(())
+            // 优先按 UUID 找（改名时更新名称），其次按名字找（把离线角色升级成 Microsoft 账号）。
+            let index = store
+                .accounts
+                .iter()
+                .position(|account| {
+                    account
+                        .microsoft
+                        .as_ref()
+                        .is_some_and(|auth| auth.uuid == uuid)
+                })
+                .or_else(|| store.index_of(name));
+
+            if let Some(index) = index {
+                let account = &mut store.accounts[index];
+                account.name = name.to_string();
+                account.kind = AccountKind::Microsoft;
+                account.microsoft = Some(auth);
+            } else {
+                store.accounts.push(Account {
+                    name: name.to_string(),
+                    kind: AccountKind::Microsoft,
+                    skin: Skin::Steve,
+                    microsoft: Some(auth),
+                });
+            }
+
+            store.active = Some(name.to_string());
+            Ok(())
+        })
+    }
+
+    /// 刷新 token 后更新账号里保存的认证信息。
+    pub fn update_microsoft_tokens(
+        &mut self,
+        name: &str,
+        access_token: &str,
+        refresh_token: &str,
+        expires_at: u64,
+    ) -> Result<(), String> {
+        self.update(|store| {
+            let Some(account) = store
+                .accounts
+                .iter_mut()
+                .find(|account| account.name.eq_ignore_ascii_case(name))
+            else {
+                return Err("未找到该角色".into());
+            };
+            let Some(auth) = account.microsoft.as_mut() else {
+                return Err("该角色不是 Microsoft 账号".into());
+            };
+
+            auth.access_token = access_token.to_string();
+            auth.refresh_token = refresh_token.to_string();
+            auth.expires_at = expires_at;
+            Ok(())
+        })
     }
 
     pub fn set_active(&mut self, name: &str) -> Result<(), String> {
-        if !self
-            .accounts
-            .iter()
-            .any(|account| account.name.eq_ignore_ascii_case(name))
-        {
+        if self.account(name).is_none() {
             return Err("未找到该角色".into());
         }
 
-        let previous_active = self.active.clone();
-        self.active = Some(name.to_string());
-
-        if let Err(error) = self.save() {
-            self.active = previous_active;
-            return Err(error);
-        }
-
-        Ok(())
+        self.update(|store| {
+            store.active = Some(name.to_string());
+            Ok(())
+        })
     }
 
     pub fn set_skin(&mut self, name: &str, skin: Skin) -> Result<(), String> {
-        let previous_accounts = self.accounts.clone();
-        let Some(account) = self
-            .accounts
-            .iter_mut()
-            .find(|account| account.name.eq_ignore_ascii_case(name))
-        else {
-            return Err("未找到该角色".into());
-        };
+        self.update(|store| {
+            let Some(account) = store
+                .accounts
+                .iter_mut()
+                .find(|account| account.name.eq_ignore_ascii_case(name))
+            else {
+                return Err("未找到该角色".into());
+            };
 
-        account.skin = skin;
-
-        if let Err(error) = self.save() {
-            self.accounts = previous_accounts;
-            return Err(error);
-        }
-
-        Ok(())
+            account.skin = skin;
+            Ok(())
+        })
     }
 
     fn save(&self) -> Result<(), String> {
-        let accounts = self
-            .accounts
-            .iter()
-            .map(|account| {
-                json!({
-                    "name": account.name,
-                    "kind": match account.kind {
-                        AccountKind::Microsoft => "microsoft",
-                        AccountKind::Offline => "offline",
-                    },
-                    "skin": match &account.skin {
-                        Skin::Steve => json!({ "type": "steve" }),
-                        Skin::Alex => json!({ "type": "alex" }),
-                        Skin::Custom(path) => json!({ "type": "custom", "path": path }),
-                    },
-                })
-            })
-            .collect::<Vec<_>>();
+        let file = StoreFile {
+            accounts: self
+                .accounts
+                .iter()
+                .map(|account| {
+                    let (skin, skin_path) = match &account.skin {
+                        Skin::Steve => ("steve".to_string(), None),
+                        Skin::Alex => ("alex".to_string(), None),
+                        Skin::Custom(path) => ("custom".to_string(), Some(path.clone())),
+                    };
 
-        let data = json!({
-            "accounts": accounts,
-            "active": self.active,
-        });
+                    AccountFile {
+                        name: account.name.clone(),
+                        kind: match account.kind {
+                            AccountKind::Microsoft => "microsoft",
+                            AccountKind::Offline => "offline",
+                        }
+                        .to_string(),
+                        skin,
+                        skin_path,
+                        microsoft: account.microsoft.as_ref().map(|auth| MicrosoftAuthFile {
+                            uuid: auth.uuid.clone(),
+                            access_token: auth.access_token.clone(),
+                            refresh_token: auth.refresh_token.clone(),
+                            expires_at: auth.expires_at,
+                        }),
+                    }
+                })
+                .collect(),
+            active: self.active.clone(),
+        };
 
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|error| format!("创建账号目录失败：{error}"))?;
         }
 
-        let text = serde_json::to_string_pretty(&data)
+        // token 保存在 %APPDATA%/Neutrino/account.toml（Windows），
+        // 属于当前用户；不要把这份文件提交到仓库或分享出去。
+        let text = toml::to_string_pretty(&file)
             .map_err(|error| format!("序列化账号数据失败：{error}"))?;
         fs::write(&self.path, text).map_err(|error| format!("保存账号数据失败：{error}"))
     }
@@ -215,7 +391,7 @@ pub fn pick_custom_skin(name: &str) -> Result<Option<Skin>, String> {
 }
 
 fn accounts_file() -> PathBuf {
-    data_dir().join("accounts.json")
+    data_dir().join("account.toml")
 }
 
 fn skins_dir() -> PathBuf {
@@ -253,13 +429,73 @@ pub(crate) fn data_dir() -> PathBuf {
     }
 }
 
-fn read_store(path: &Path) -> (Vec<Account>, Option<String>) {
+fn read_toml(path: &Path) -> (Vec<Account>, Option<String>) {
     let Ok(text) = fs::read_to_string(path) else {
         return (Vec::new(), None);
     };
-    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+    let Ok(file) = toml::from_str::<StoreFile>(&text) else {
         return (Vec::new(), None);
     };
+
+    let accounts = file
+        .accounts
+        .into_iter()
+        .filter_map(account_from_file)
+        .collect::<Vec<_>>();
+    let active = file.active.filter(|active| {
+        accounts
+            .iter()
+            .any(|account| account.name.eq_ignore_ascii_case(active))
+    });
+
+    (accounts, active)
+}
+
+fn account_from_file(item: AccountFile) -> Option<Account> {
+    let AccountFile {
+        name,
+        kind,
+        skin,
+        skin_path,
+        microsoft,
+    } = item;
+    if name.is_empty() {
+        return None;
+    }
+
+    let kind = match kind.as_str() {
+        "microsoft" => AccountKind::Microsoft,
+        _ => AccountKind::Offline,
+    };
+    let skin = match skin.as_str() {
+        "alex" => Skin::Alex,
+        "custom" => Skin::Custom(skin_path.unwrap_or_default()),
+        _ => Skin::Steve,
+    };
+    let microsoft = microsoft.and_then(|auth| {
+        if auth.uuid.is_empty() {
+            return None;
+        }
+        Some(MicrosoftAuth {
+            uuid: auth.uuid,
+            access_token: auth.access_token,
+            refresh_token: auth.refresh_token,
+            expires_at: auth.expires_at,
+        })
+    });
+
+    Some(Account {
+        name,
+        kind,
+        skin,
+        microsoft,
+    })
+}
+
+/// 读取旧版 `accounts.json`，只用于一次性迁移到 `account.toml`。
+fn read_legacy_json(path: &Path) -> Option<(Vec<Account>, Option<String>)> {
+    let text = fs::read_to_string(path).ok()?;
+    let value = serde_json::from_str::<Value>(&text).ok()?;
 
     let accounts = value
         .get("accounts")
@@ -290,7 +526,20 @@ fn read_store(path: &Path) -> (Vec<Account>, Option<String>) {
                         }
                         _ => Skin::Steve,
                     };
-                    Some(Account { name, kind, skin })
+                    let microsoft = item.get("microsoft").and_then(|auth| {
+                        Some(MicrosoftAuth {
+                            uuid: auth.get("uuid")?.as_str()?.to_string(),
+                            access_token: auth.get("access_token")?.as_str()?.to_string(),
+                            refresh_token: auth.get("refresh_token")?.as_str()?.to_string(),
+                            expires_at: auth.get("expires_at").and_then(Value::as_u64).unwrap_or(0),
+                        })
+                    });
+                    Some(Account {
+                        name,
+                        kind,
+                        skin,
+                        microsoft,
+                    })
                 })
                 .collect::<Vec<_>>()
         })
@@ -306,7 +555,7 @@ fn read_store(path: &Path) -> (Vec<Account>, Option<String>) {
                 .any(|account| account.name.eq_ignore_ascii_case(active))
         });
 
-    (accounts, active)
+    Some((accounts, active))
 }
 
 #[cfg(test)]
@@ -329,7 +578,7 @@ mod tests {
         }
 
         fn store(&self) -> Store {
-            Store::load(self.path.join("accounts.json"))
+            Store::load(self.path.join("account.toml"))
         }
     }
 
@@ -352,6 +601,7 @@ mod tests {
                 name: "Steve".into(),
                 kind: AccountKind::Offline,
                 skin: Skin::Steve,
+                microsoft: None,
             }]
         );
         assert_eq!(store.active(), Some("Steve"));
@@ -359,6 +609,56 @@ mod tests {
         let reloaded = temp.store();
         assert_eq!(reloaded.accounts(), store.accounts());
         assert_eq!(reloaded.active(), Some("Steve"));
+    }
+
+    #[test]
+    fn saves_account_toml() {
+        let temp = TempDir::new("toml");
+        let mut store = temp.store();
+        store.add_offline("Steve").expect("add account");
+
+        let text = fs::read_to_string(temp.path.join("account.toml")).expect("read toml");
+        assert!(text.contains("[[accounts]]"));
+        assert!(text.contains("name = \"Steve\""));
+        assert!(text.contains("kind = \"offline\""));
+        assert!(text.contains("skin = \"steve\""));
+    }
+
+    #[test]
+    fn migrates_legacy_accounts_json_to_toml() {
+        let temp = TempDir::new("migrate");
+        let legacy = temp.path.join("accounts.json");
+        fs::write(
+            &legacy,
+            r#"{
+                "accounts": [
+                    { "name": "Steve", "kind": "offline", "skin": { "type": "steve" } }
+                ],
+                "active": "Steve"
+            }"#,
+        )
+        .expect("write legacy json");
+
+        let store = Store::load(temp.path.join("account.toml"));
+        assert_eq!(store.accounts().len(), 1);
+        assert_eq!(store.active(), Some("Steve"));
+        assert!(temp.path.join("account.toml").is_file());
+        assert!(!legacy.exists());
+    }
+
+    #[test]
+    fn custom_skin_survives_toml_roundtrip() {
+        let temp = TempDir::new("skin-toml");
+        let mut store = temp.store();
+        store.add_offline("Steve").expect("add account");
+        store
+            .set_skin("Steve", Skin::Custom(r"C:\skins\steve.png".into()))
+            .expect("set custom skin");
+
+        assert_eq!(
+            temp.store().accounts()[0].skin,
+            Skin::Custom(r"C:\skins\steve.png".into())
+        );
     }
 
     #[test]
@@ -372,6 +672,56 @@ mod tests {
 
         store.add_offline("Steve").expect("add account");
         assert!(store.add_offline("steve").is_err());
+    }
+
+    #[test]
+    fn stores_microsoft_account_and_refreshes_tokens() {
+        let temp = TempDir::new("microsoft");
+        let mut store = temp.store();
+
+        store
+            .upsert_microsoft("Alex", "uuid-1", "access-1", "refresh-1", 100)
+            .expect("add microsoft account");
+
+        assert_eq!(store.active(), Some("Alex"));
+        let account = store.account("Alex").expect("account");
+        assert_eq!(account.kind, AccountKind::Microsoft);
+        let auth = account.microsoft.as_ref().expect("microsoft auth");
+        assert_eq!(auth.uuid, "uuid-1");
+        assert_eq!(auth.access_token, "access-1");
+
+        let reloaded = temp.store();
+        let account = reloaded.account("Alex").expect("reloaded account");
+        let auth = account.microsoft.as_ref().expect("reloaded auth");
+        assert_eq!(auth.refresh_token, "refresh-1");
+        assert_eq!(auth.expires_at, 100);
+
+        store
+            .update_microsoft_tokens("Alex", "access-2", "refresh-2", 200)
+            .expect("update tokens");
+        let reloaded = temp.store();
+        let account = reloaded.account("Alex").expect("reloaded account");
+        let auth = account.microsoft.as_ref().expect("reloaded auth");
+        assert_eq!(auth.access_token, "access-2");
+        assert_eq!(auth.refresh_token, "refresh-2");
+        assert_eq!(auth.expires_at, 200);
+    }
+
+    #[test]
+    fn upgrading_an_offline_account_keeps_its_skin() {
+        let temp = TempDir::new("microsoft-upgrade");
+        let mut store = temp.store();
+
+        store.add_offline("Steve").expect("add offline");
+        store.set_skin("Steve", Skin::Alex).expect("set skin");
+        store
+            .upsert_microsoft("Steve", "uuid-2", "a", "r", 1)
+            .expect("upgrade account");
+
+        let account = store.account("Steve").expect("account");
+        assert_eq!(account.kind, AccountKind::Microsoft);
+        assert_eq!(account.skin, Skin::Alex);
+        assert!(account.microsoft.is_some());
     }
 
     #[test]

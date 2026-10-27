@@ -4,6 +4,8 @@ export struct VersionInfo {
   kind: string,
   /// 展示用类型名（正式版 / 快照 / 历史版本）
   kind-label: string,
+  /// 是否是愚人节版本（清单里同样标成 snapshot，需要单独识别）
+  is-fools: bool,
   /// 发布日期（只到日）
   release-date: string,
 }

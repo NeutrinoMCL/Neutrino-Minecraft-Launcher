@@ -4,6 +4,14 @@ export global Actions {
   callback open-folder(string);
   callback open-url(string);
   callback load-instance-content(string);
+  /// 读取实例当前加载器可选的全部版本（MC 版本、加载器 key）
+  callback refresh-instance-loader-versions(string, string);
+  /// 切换实例加载器版本（实例名、MC 版本、加载器 key、目标版本）
+  callback switch-instance-loader(string, string, string, string);
+  /// 启用 / 禁用实例里的某个内容（实例路径、目录名、文件名）
+  callback toggle-content(string, string, string);
+  /// 删除实例里的某个内容（实例路径、目录名、文件名）
+  callback delete-content(string, string, string);
   /// 启动指定实例（版本 id）
   callback launch-instance(string);
   callback add-offline-account(string) -> string;
@@ -12,6 +20,26 @@ export global Actions {
   callback set-default-skin(string, SkinType);
   callback choose-custom-skin(string);
   callback start-microsoft-login();
+
+  /// 把当前主题偏好写回 conf.toml（"system" / "dark" / "light"）
+  callback save-theme-preference(string);
+
+  /// 选择一张或多张自定义壁纸并写回 conf.toml；返回错误信息（空字符串表示成功或取消）
+  callback choose-custom-wallpaper() -> string;
+  /// 切换背景类型："image" / "color"
+  callback choose-background-mode(string) -> string;
+  /// 用 hex 文本设置纯色背景（支持 #RGB / #RRGGBB）
+  callback set-wallpaper-color(string) -> string;
+  /// 用调色板里的颜色设置纯色背景
+  callback pick-wallpaper-color(color) -> string;
+  /// 选中已添加的壁纸（并关闭随机模式）
+  callback select-wallpaper(string) -> string;
+  /// 从已添加列表里移除一张壁纸
+  callback remove-wallpaper(string) -> string;
+  /// 开启 / 关闭启动时随机选择壁纸
+  callback set-wallpaper-random(bool) -> string;
+  /// 恢复默认壁纸并写回 conf.toml；返回错误信息
+  callback reset-wallpaper() -> string;
 
   /// 重新拉取版本清单（会走网络）
   callback refresh-versions();
@@ -25,13 +53,46 @@ export global Actions {
   callback choose-loader-version(string);
   /// 向导返回上一步
   callback go-back();
-  /// 重置向导（回到版本列表）
+  /// 重置向导（回到创建方式选择）
   callback reset-add-instance();
+  /// 从创建方式选择进入“安装新实例”的版本列表
+  callback start-new-instance();
   /// 按当前向导状态和输入的名字创建实例
   callback create-instance(string);
 
   /// 切换发现页类别：vanilla / mod / shader / resourcepack / modpack
   callback open-category(string);
-  /// 下载（安装）指定项目到对应目录
-  callback download-project(string);
+  /// 从实例打开下载弹窗：类别、实例游戏版本、加载器显示名
+  callback open-instance-download(string, string, string);
+  /// 设置发现页搜索关键词；空字符串表示清空
+  callback search-projects(string);
+  /// 切换发现页下载源：modrinth / curseforge
+  callback choose-source(string);
+  /// 按 Minecraft 版本筛选发现页项目；“全部版本”表示不筛选
+  callback choose-game-version(string);
+  /// 按模组加载器筛选发现页项目；“全部加载器”表示不筛选
+  callback choose-loader-filter(string);
+  /// 按分类筛选发现页项目；“全部分类”表示不筛选
+  callback choose-category-filter(string);
+  /// 切换发现页排序方式
+  callback choose-sort(string);
+  /// 打开项目详情，加载所有版本和模组加载器
+  callback open-project(string);
+  /// 关闭项目详情，回到项目列表
+  callback close-project();
+  /// 下载项目详情里的某个版本
+  callback download-version(string);
+  /// 设置下载目标实例（空字符串表示下载到默认 .minecraft）
+  callback set-download-target(string);
+  /// 检查实例内容更新（实例路径、目录名、内容类别）
+  callback check-content-updates(string, string, string);
+  /// 更新一条实例内容（更新项 key）
+  callback update-content(string);
+
+  /// 3D 预览：开始一次拖拽（记下当前角度）
+  callback preview-orbit-start();
+  /// 3D 预览：鼠标相对按下点的位移（像素）
+  callback preview-orbit(length, length);
+  /// 加载指定角色的皮肤到 3D 预览；第二个参数表示当前是否浅色主题
+  callback preview-skin(string, bool);
 }

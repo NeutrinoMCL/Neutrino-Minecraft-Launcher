@@ -1,16 +1,20 @@
 import "fonts/HarmonyOS_Sans_SC_Regular.ttf";
 import { AppShell } from "shell/app-shell.slint";
 
+// 导出给 Rust：启动时按 conf.toml 设置主题。
+export { Theme } from "theme/theme.slint";
+
 export { Actions } from "state/actions.slint";
 export { AppState } from "state/app-state.slint";
 export { MsaState, MsaStatus } from "state/msa-state.slint";
-export { AccountKind, SkinType } from "models/enums.slint";
+export { AccountKind, SkinType, ThemePreference } from "models/enums.slint";
 export { AccountInfo } from "models/account.slint";
-export { InstanceInfo, ContentFile } from "models/instance.slint";
+export { InstanceInfo, ContentFile, ContentUpdateInfo } from "models/instance.slint";
+export { WallpaperInfo } from "models/wallpaper.slint";
 export { JavaInfo } from "models/java.slint";
 export { LoaderInfo } from "models/loader.slint";
 export { VersionInfo } from "models/version.slint";
-export { ProjectInfo } from "models/project.slint";
+export { ProjectInfo, ProjectVersionInfo } from "models/project.slint";
 
 export component AppWindow inherits Window {
   title: "Neutrino Minecraft Launcher";

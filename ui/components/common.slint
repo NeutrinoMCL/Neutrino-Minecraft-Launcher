@@ -1,0 +1,208 @@
+// 多个页面共用的基础组件；只放纯样式，不依赖 AppState / Actions。
+import { Palette } from "std-widgets.slint";
+
+// 成功 / 错误提示条
+export component MessageStrip inherits Rectangle {
+  in property <string> message;
+  in property <bool> ok;
+
+  height: 40px;
+  border-radius: 6px;
+  background: root.ok ? Palette.accent-background.with-alpha(0.10) : #fee2e2;
+  border-width: 1px;
+  border-color: root.ok ? Palette.accent-background.with-alpha(0.30) : #fecaca;
+
+  HorizontalLayout {
+    padding-left: 12px;
+    padding-right: 12px;
+    cross-axis-alignment: center;
+
+    Text {
+      text: root.message;
+      color: root.ok ? Palette.foreground : #991b1b;
+      font-size: 12px;
+      vertical-alignment: center;
+      overflow: elide;
+    }
+  }
+}
+
+// 蓝色信息标签：客户端/服务端、分类、加载器、版本类型等
+export component Tag inherits Rectangle {
+  in property <string> label;
+  in property <length> corner-radius: 6px;
+
+  height: 20px;
+  horizontal-stretch: 0;
+  border-radius: root.corner-radius;
+  background: #dbeafe;
+
+  HorizontalLayout {
+    padding-left: 6px;
+    padding-right: 6px;
+    alignment: center;
+    cross-axis-alignment: center;
+
+    Text {
+      text: root.label;
+      color: #1e40af;
+      font-size: 11px;
+      font-weight: 600;
+      vertical-alignment: center;
+    }
+  }
+}
+
+// 带旋转图标的刷新按钮；加载中自动禁用点击。
+export component RefreshButton inherits Rectangle {
+  in property <bool> loading: false;
+  in property <string> label: "刷新";
+  in property <string> loading-label: "获取中…";
+
+  callback clicked();
+
+  height: 32px;
+  min-width: 84px;
+  horizontal-stretch: 0;
+  border-radius: 6px;
+  opacity: root.loading ? 0.5 : 1.0;
+  background: touch.has-hover ? Palette.foreground.with-alpha(0.06) : transparent;
+
+  HorizontalLayout {
+    padding-left: 10px;
+    padding-right: 12px;
+    spacing: 6px;
+    alignment: center;
+    cross-axis-alignment: center;
+
+    Image {
+      source: @image-url("../images/icons/arrow-repeat.svg");
+      width: 16px;
+      height: 16px;
+      colorize: Palette.foreground.with-alpha(0.72);
+    }
+
+    Text {
+      text: root.loading ? root.loading-label : root.label;
+      color: Palette.foreground;
+      font-size: 12px;
+      vertical-alignment: center;
+    }
+  }
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      if (!root.loading) {
+        root.clicked();
+      }
+    }
+  }
+}
+
+// 设置页 / 弹窗共用的操作按钮；具体尺寸由使用方覆盖。
+export component ActionButton inherits Rectangle {
+  in property <string> label;
+  in property <bool> primary: false;
+  in property <bool> enabled: true;
+  in property <length> button-height: 32px;
+  in property <length> button-min-width: 84px;
+
+  callback clicked();
+
+  height: root.button-height;
+  min-width: root.button-min-width;
+  horizontal-stretch: 0;
+  border-radius: 6px;
+  opacity: root.enabled ? 1.0 : 0.45;
+  border-width: root.primary ? 1px : 0px;
+  border-color: Palette.accent-background.with-alpha(0.55);
+  background: root.primary
+    ? (touch.has-hover && root.enabled
+        ? Palette.accent-background.with-alpha(0.30)
+        : Palette.accent-background.with-alpha(0.18))
+    : (touch.has-hover && root.enabled
+        ? Palette.foreground.with-alpha(0.10)
+        : Palette.foreground.with-alpha(0.05));
+
+  Text {
+    text: root.label;
+    color: root.primary ? Palette.accent-background : Palette.foreground;
+    font-size: 12px;
+    font-weight: root.primary ? 600 : 400;
+    horizontal-alignment: center;
+    vertical-alignment: center;
+  }
+
+  touch := TouchArea {
+    mouse-cursor: root.enabled ? pointer : default;
+    clicked => {
+      if (root.enabled) {
+        root.clicked();
+      }
+    }
+  }
+}
+
+// 列表加载中 / 空状态的居中提示
+export component EmptyHint inherits Text {
+  x: 0;
+  y: 0;
+  width: 100%;
+  height: 100%;
+  color: Palette.foreground.with-alpha(0.45);
+  font-size: 13px;
+  horizontal-alignment: center;
+  vertical-alignment: center;
+}
+
+// 统一的弹窗外壳：遮罩 + 居中的卡片；内容通过 @children 传入。
+export component ModalCard inherits Rectangle {
+  in property <length> card-width: 640px;
+  in property <length> card-height: 440px;
+  in property <bool> close-enabled: true;
+  in property <bool> card-clip: false;
+
+  callback close();
+
+  background: rgba(0, 0, 0, 0.55);
+
+  backdrop := TouchArea {
+    clicked => {
+      if (root.close-enabled) {
+        root.close();
+      }
+    }
+  }
+
+  dialog-card := Rectangle {
+    width: root.card-width;
+    height: root.card-height;
+    x: (parent.width - self.width) / 2;
+    y: (parent.height - self.height) / 2;
+    border-radius: 8px;
+    background: Palette.background;
+    border-width: 1px;
+    border-color: Palette.foreground.with-alpha(0.12);
+    drop-shadow-color: rgba(0, 0, 0, 0.35);
+    drop-shadow-blur: 28px;
+    drop-shadow-offset-y: 10px;
+    clip: root.card-clip;
+
+    TouchArea { }
+
+    @children
+  }
+}
+
+// 带边框和裁切的列表容器；ListView / 空状态提示通过 @children 放入。
+export component ListPanel inherits Rectangle {
+  background: Palette.background.with-alpha(0.5);
+  border-width: 1px;
+  border-color: Palette.foreground.with-alpha(0.08);
+  border-radius: 6px;
+  clip: true;
+
+  @children
+}
+

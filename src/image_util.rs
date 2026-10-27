@@ -2,7 +2,7 @@
 //!
 //! Slint 的 `Image.source` 是 `image` 类型而不是 URL，所以远程 / 本地图片都要先在这里解码。
 
-/// 解码 PNG / JPEG 等内存字节成 RGBA。
+/// 解码 PNG / JPEG / WebP / GIF 等内存字节成 RGBA。
 ///
 /// `slint::Image` 不是 `Send`，所以耗时的解码放在后台线程做，回到 UI 线程再 [`from_rgba`]。
 pub fn decode_rgba(bytes: &[u8]) -> Option<image::RgbaImage> {

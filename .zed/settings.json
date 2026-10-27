@@ -1,5 +1,9 @@
 {
   "languages": {
+    "Go": {
+      "hard_tabs": true,
+      "tab_size": 2
+    },
     "Slint": {
       "formatter": "language_server",
       "language_servers": ["slint"],

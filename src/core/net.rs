@@ -99,11 +99,16 @@ impl Downloader {
 
     /// 取回原始字节。
     pub fn get_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        self.get_bytes_with_headers(url, &[])
+    }
+
+    /// 带自定义请求头取回原始字节（例如 CurseForge 的 `x-api-key`）。
+    pub fn get_bytes_with_headers(&self, url: &str, headers: &[(&str, &str)]) -> Result<Vec<u8>> {
         // 资源索引 JSON 可能有好几 MB，默认 10 MB 上限太紧，这里放宽到 64 MB。
         const MAX_BYTES: u64 = 64 * 1024 * 1024;
 
         self.retry(|| {
-            let mut response = self.request(url)?;
+            let mut response = self.request(url, headers)?;
             response
                 .body_mut()
                 .with_config()
@@ -115,7 +120,17 @@ impl Downloader {
 
     /// 取回并解析 JSON。
     pub fn get_json<T: DeserializeOwned>(&self, url: &str, context: &str) -> Result<T> {
-        let bytes = self.get_bytes(url)?;
+        self.get_json_with_headers(url, context, &[])
+    }
+
+    /// 带自定义请求头取回并解析 JSON。
+    pub fn get_json_with_headers<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        context: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<T> {
+        let bytes = self.get_bytes_with_headers(url, headers)?;
         serde_json::from_slice(&bytes).map_err(|source| CoreError::Json {
             context: context.to_string(),
             source,
@@ -211,8 +226,17 @@ impl Downloader {
         Ok(stats.into_inner().unwrap_or_default())
     }
 
-    fn request(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>> {
-        match self.agent.get(url).call() {
+    fn request(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<ureq::http::Response<ureq::Body>> {
+        let mut request = self.agent.get(url);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+
+        match request.call() {
             Ok(response) => Ok(response),
             Err(ureq::Error::StatusCode(status)) => Err(CoreError::HttpStatus {
                 status,
@@ -223,7 +247,7 @@ impl Downloader {
     }
 
     fn fetch_to_file(&self, url: &str, dest: &Path, sha1: Option<&str>) -> Result<()> {
-        let response = self.request(url)?;
+        let response = self.request(url, &[])?;
 
         let mut tmp_name = dest.as_os_str().to_owned();
         tmp_name.push(".part");
@@ -302,6 +326,26 @@ fn is_retryable(err: &CoreError) -> bool {
     }
 }
 
+/// 按 RFC 3986 对查询参数 / URL 片段做百分号编码。
+pub fn encode_component(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => {
+                encoded.push('%');
+                encoded.push(HEX[(byte >> 4) as usize] as char);
+                encoded.push(HEX[(byte & 0x0f) as usize] as char);
+            }
+        }
+    }
+    encoded
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,5 +389,15 @@ mod tests {
         assert_eq!(outcome, DownloadOutcome::Cached);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encodes_query_components() {
+        assert_eq!(encode_component("1.21.1"), "1.21.1");
+        assert_eq!(
+            encode_component(r#"[["versions:1.21.1"]]"#),
+            "%5B%5B%22versions%3A1.21.1%22%5D%5D"
+        );
+        assert_eq!(encode_component("a b&c"), "a%20b%26c");
     }
 }

@@ -6,12 +6,33 @@ export struct ProjectInfo {
   /// 作者 · 下载量
   subtitle: string,
   description: string,
-  /// 主标签（加载器 / 分类），展示用
-  tag: string,
-  /// 按钮文案：下载 / 暂不支持
-  action-label: string,
-  downloadable: bool,
   /// 项目图标（下载失败时为空，用首字母头像兜底）
   icon: image,
   has-icon: bool,
+  /// 客户端 / 服务端、分类、加载器等蓝色标签
+  tags: [string],
+}
+
+export struct ProjectVersionInfo {
+  /// 下载时用的唯一标识（Modrinth version id / CurseForge file id）
+  key: string,
+  /// 版本名或文件名
+  name: string,
+  /// 支持的游戏版本，逗号分隔
+  game-versions: string,
+  /// 支持的模组 / 光影加载器
+  loaders: [string],
+  /// 正式版 / Beta / Alpha
+  channel: string,
+  file-name: string,
+  size: string,
+  downloadable: bool,
+  /// 是否是与当前实例最匹配的推荐版本
+  recommended: bool
+}
+
+export struct ProjectVersionGroup {
+  /// 游戏版本分组标题，或“多版本 / 通用”
+  game-version: string,
+  versions: [ProjectVersionInfo],
 }

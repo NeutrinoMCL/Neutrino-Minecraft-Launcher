@@ -1,18 +1,59 @@
 import { AccountInfo } from "../models/account.slint";
-import { InstanceInfo, ContentFile } from "../models/instance.slint";
+import { InstanceInfo, ContentFile, ContentUpdateInfo } from "../models/instance.slint";
 import { JavaInfo } from "../models/java.slint";
 import { LoaderInfo } from "../models/loader.slint";
-import { ProjectInfo } from "../models/project.slint";
+import { ProjectInfo, ProjectVersionInfo, ProjectVersionGroup } from "../models/project.slint";
 import { VersionInfo } from "../models/version.slint";
+import { WallpaperInfo } from "../models/wallpaper.slint";
 
 export global AppState {
   in property <string> game-dir: "";
+  /// 应用背景，由 conf.toml 的 [appearance.background] 决定。
+  in property <image> wallpaper: @image-url("../images/backgrounds/Jokull.jpg");
+  /// 当前背景的显示名（例如 "Jokull.jpg" 或自定义文件名），设置页用来展示。
+  in property <string> background-name: "Jokull.jpg";
+  /// 当前背景是否是纯色
+  in property <bool> background-is-color: false;
+  /// 纯色背景的颜色（用于预览 / 大面积填充）
+  in property <color> wallpaper-color: #1E3A8A;
+  /// 纯色背景的 hex 文本（设置页展示 / 输入）
+  in property <string> wallpaper-color-hex: "#1E3A8A";
+  /// 已添加的自定义壁纸（设置页列表）
+  in property <[WallpaperInfo]> wallpapers: [];
+  /// 是否每次启动从已选壁纸里随机挑一张
+  in property <bool> wallpaper-random: false;
   in property <[InstanceInfo]> instances: [];
+  /// 当前实例的加载器信息（由实例内容加载器读取）
+  in property <string> instance-game-version: "";
+  in property <string> instance-loader: "";
+  in property <string> instance-loader-name: "原版";
+  in property <string> instance-loader-version: "";
+  /// 切换加载器版本
+  in property <bool> switching-loader: false;
+  in property <string> loader-switch-message: "";
+  in property <bool> loader-switch-ok: false;
   in property <[ContentFile]> mods: [];
   in property <[ContentFile]> resource-packs: [];
   in property <[ContentFile]> shader-packs: [];
+  /// 实例内容更新检查
+  in property <bool> update-checking: false;
+  in property <string> update-summary: "";
+  in property <string> update-error: "";
+  in property <string> update-message: "";
+  in property <bool> update-ok: false;
+  in property <string> updating-content-key: "";
+  in property <[ContentUpdateInfo]> content-updates: [];
   in property <[AccountInfo]> accounts: [];
   in property <string> active-account: "";
+  /// 当前账户类型：微软账户 / 离线模式；没有账户时为空。
+  in property <string> active-account-kind: "";
+  /// 当前账户头像（Steve / Alex 使用内置头像，自定义皮肤使用裁剪后的头部）。
+  in property <image> active-account-avatar;
+
+  /// 3D 预览帧（wgpu 纹理导入）；空表示当前渲染器不支持或还没准备好。
+  in property <image> preview-image;
+  /// 3D 预览是否可用（wgpu 后端初始化成功并已出第一帧）
+  in property <bool> preview-ready: false;
 
   /// 最近一次启动游戏的结果
   in property <string> launch-message: "";
@@ -31,6 +72,27 @@ export global AppState {
   /// 当前类别：mod / shader / resourcepack / modpack
   in property <string> category: "mod";
 
+  /// 发现页下载源：modrinth / curseforge
+  in property <string> discover-source: "modrinth";
+
+  /// 发现页当前搜索关键词；空字符串表示没有搜索
+  in property <string> discover-query: "";
+
+  /// 发现页的游戏版本下拉框：第一项是“全部版本”
+  in property <[string]> game-versions: ["全部版本"];
+
+  /// 当前选中的游戏版本；空表示“全部版本”（CurseForge 的加载器筛选需要它）
+  in property <string> selected-game-version: "";
+
+  /// 发现页的加载器下拉框：第一项是“全部加载器”
+  in property <[string]> loader-options: ["全部加载器"];
+
+  /// 发现页的分类下拉框：第一项是“全部分类”
+  in property <[string]> category-options: ["全部分类"];
+
+  /// 发现页排序选项；随下载源变化
+  in property <[string]> sort-options: ["相关度", "下载量", "关注量", "发布日期", "更新日期"];
+
   /// 原版版本列表（当前筛选条件下）
   in property <[VersionInfo]> versions: [];
   in property <bool> versions-loading: false;
@@ -45,6 +107,27 @@ export global AppState {
   in property <string> projects-error: "";
   in property <string> projects-summary: "";
 
+  // ---- 项目详情 / 版本选择 ----
+
+  /// 是否正在查看某个项目的版本列表
+  in property <bool> project-open: false;
+  in property <string> project-title: "";
+  /// 作者 · 下载量
+  in property <string> project-subtitle: "";
+  in property <string> project-description: "";
+  in property <image> project-icon;
+  in property <bool> project-has-icon: false;
+  in property <string> project-initial: "";
+  /// 项目详情标题后的蓝色标签：客户端/服务端、分类、加载器
+  in property <[string]> project-tags: [];
+  /// 项目详情版本列表，按游戏版本分组
+  in property <[ProjectVersionGroup]> project-version-groups: [];
+  /// 当前实例推荐版本（仅在实例下载弹窗里有效）
+  in property <bool> has-recommended-version: false;
+  in property <ProjectVersionInfo> recommended-version;
+  in property <bool> project-versions-loading: false;
+  in property <string> project-versions-error: "";
+
   /// 是否有安装任务正在进行（同一时间只允许一个）
   in property <bool> installing: false;
   in property <string> installing-version: "";
@@ -57,8 +140,8 @@ export global AppState {
 
   // ---- 添加实例向导 ----
 
-  /// versions / loader / loader-version / name
-  in property <string> add-step: "versions";
+  /// source / versions / loader / loader-version / name / done
+  in property <string> add-step: "source";
   /// 当前选中的原版版本
   in property <string> pending-version: "";
   /// fabric / forge；空字符串表示跳过加载器
@@ -70,8 +153,8 @@ export global AppState {
   in property <bool> loader-versions-loading: false;
   in property <string> loader-versions-error: "";
 
-  /// 正在下载的项目 id
-  in property <string> downloading-project: "";
+  /// 正在下载的版本 key（Modrinth version id / CurseForge file id）
+  in property <string> downloading-version: "";
   in property <string> download-message: "";
   in property <bool> download-ok: false;
 }

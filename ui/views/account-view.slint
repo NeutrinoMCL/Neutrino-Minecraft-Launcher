@@ -1,5 +1,6 @@
 import { LineEdit, ListView, Palette } from "std-widgets.slint";
-import { AccountFilter, SkinType } from "../models/enums.slint";
+import { ModalCard } from "../components/common.slint";
+import { AccountFilter, AccountKind, SkinType } from "../models/enums.slint";
 import { Actions } from "../state/actions.slint";
 import { AppState } from "../state/app-state.slint";
 import { MsaState, MsaStatus } from "../state/msa-state.slint";
@@ -133,6 +134,7 @@ component AccountCard inherits Rectangle {
   in property <bool> active;
   in property <SkinType> skin;
   in property <image> avatar;
+  in property <AccountKind> kind;
 
   callback activate();
   callback remove();
@@ -227,7 +229,7 @@ component AccountCard inherits Rectangle {
       }
 
       Text {
-        text: "离线账号";
+        text: root.kind == AccountKind.microsoft ? "Microsoft 账号" : "离线账号";
         color: Palette.foreground.with-alpha(0.5);
         font-size: 11px;
       }
@@ -292,6 +294,7 @@ component SkinOptionRow inherits Rectangle {
   callback clicked();
 
   height: 40px;
+  horizontal-stretch: 1;
   border-radius: 6px;
   background: root.selected
     ? Palette.accent-background.with-alpha(0.12)
@@ -350,28 +353,14 @@ component SkinDialog inherits Rectangle {
 
   callback cancel();
 
-  background: rgba(0, 0, 0, 0.55);
+  background: transparent;
 
-  backdrop := TouchArea {
-    clicked => {
+  ModalCard {
+    card-width: 640px;
+    card-height: 440px;
+    close => {
       root.cancel();
     }
-  }
-
-  dialog := Rectangle {
-    width: 400px;
-    height: 306px;
-    x: (parent.width - self.width) / 2;
-    y: (parent.height - self.height) / 2;
-    border-radius: 8px;
-    background: Palette.background;
-    border-width: 1px;
-    border-color: Palette.foreground.with-alpha(0.12);
-    drop-shadow-color: rgba(0, 0, 0, 0.35);
-    drop-shadow-blur: 28px;
-    drop-shadow-offset-y: 10px;
-
-    TouchArea { }
 
     VerticalLayout {
       padding: 20px;
@@ -385,55 +374,104 @@ component SkinDialog inherits Rectangle {
       }
 
       HorizontalLayout {
-        spacing: 16px;
+        spacing: 20px;
+        vertical-stretch: 1;
         cross-axis-alignment: center;
 
+        // 3D 预览（wgpu 离屏渲染，纹理直接导入成 image）
         Rectangle {
-          width: 80px;
-          height: 80px;
+          width: 280px;
+          height: 280px;
+          horizontal-stretch: 0;
+          vertical-stretch: 0;
           border-radius: 8px;
-          clip: true;
+          background: Palette.background.with-alpha(0.5);
           border-width: 1px;
           border-color: Palette.foreground.with-alpha(0.12);
+          clip: true;
 
-          for account in AppState.accounts : Image {
-            visible: account.name == root.account;
-            source: account.skin == SkinType.steve
-              ? @image-url("../images/faces/steve.png")
-              : account.skin == SkinType.alex
-                ? @image-url("../images/faces/alex.png")
-                : account.avatar;
+          Image {
+            source: AppState.preview-image;
             width: 100%;
             height: 100%;
+            image-fit: contain;
+          }
+
+          if !AppState.preview-ready : Text {
+            text: "3D 预览不可用";
+            width: 100%;
+            height: 100%;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            color: Palette.foreground.with-alpha(0.4);
+            font-size: 12px;
+          }
+
+          Text {
+            text: "拖动旋转";
+            width: 100%;
+            y: parent.height - self.height - 10px;
+            horizontal-alignment: center;
+            color: Palette.foreground.with-alpha(0.55);
+            font-size: 11px;
+          }
+
+          skin-preview-touch := TouchArea {
+            mouse-cursor: pointer;
+
+            changed pressed => {
+              if (self.pressed) {
+                Actions.preview-orbit-start();
+              }
+            }
+
+            moved => {
+              Actions.preview-orbit(self.mouse-x - self.pressed-x, self.mouse-y - self.pressed-y);
+            }
           }
         }
 
-        for account in AppState.accounts : VerticalLayout {
-          visible: account.name == root.account;
+        // 只把当前账号的选项放进布局：隐藏账号的列如果还参与布局，会把第 2 / 第 3 个
+        // 账号的选项推到右边，甚至挤出弹窗。
+        Rectangle {
           horizontal-stretch: 1;
-          spacing: 6px;
+          vertical-stretch: 0;
+          height: 132px;
+          background: transparent;
 
-          SkinOptionRow {
-            label: "Steve（默认）";
-            selected: account.skin == SkinType.steve;
-            clicked => {
-              Actions.set-default-skin(root.account, SkinType.steve);
+          for account in AppState.accounts : VerticalLayout {
+            visible: account.name == root.account;
+            x: 0;
+            y: 0;
+            width: 100%;
+            height: 100%;
+            spacing: 6px;
+
+            SkinOptionRow {
+              label: "Steve（默认）";
+              selected: account.skin == SkinType.steve;
+              clicked => {
+                Actions.set-default-skin(root.account, SkinType.steve);
+                Actions.preview-skin(root.account, Palette.background.red > 128);
+              }
             }
-          }
 
-          SkinOptionRow {
-            label: "Alex（默认）";
-            selected: account.skin == SkinType.alex;
-            clicked => {
-              Actions.set-default-skin(root.account, SkinType.alex);
+            SkinOptionRow {
+              label: "Alex（默认）";
+              selected: account.skin == SkinType.alex;
+              clicked => {
+                Actions.set-default-skin(root.account, SkinType.alex);
+                Actions.preview-skin(root.account, Palette.background.red > 128);
+              }
             }
-          }
 
-          SkinOptionRow {
-            label: "自定义皮肤";
-            selected: account.skin == SkinType.custom;
-            clicked => {
-              Actions.choose-custom-skin(root.account);
+            SkinOptionRow {
+              label: "自定义皮肤";
+              selected: account.skin == SkinType.custom;
+              clicked => {
+                Actions.choose-custom-skin(root.account);
+                Actions.preview-skin(root.account, Palette.background.red > 128);
+              }
             }
           }
         }
@@ -462,6 +500,10 @@ component SkinDialog inherits Rectangle {
       }
     }
   }
+
+  init => {
+    Actions.preview-skin(root.account, Palette.background.red > 128);
+  }
 }
 
 component AddAccountDialog inherits Rectangle {
@@ -471,28 +513,14 @@ component AddAccountDialog inherits Rectangle {
   callback cancel();
   callback submit();
 
-  background: rgba(0, 0, 0, 0.55);
+  background: transparent;
 
-  backdrop := TouchArea {
-    clicked => {
+  ModalCard {
+    card-width: 380px;
+    card-height: 232px;
+    close => {
       root.cancel();
     }
-  }
-
-  dialog := Rectangle {
-    width: 380px;
-    height: 232px;
-    x: (parent.width - self.width) / 2;
-    y: (parent.height - self.height) / 2;
-    border-radius: 8px;
-    background: Palette.background;
-    border-width: 1px;
-    border-color: Palette.foreground.with-alpha(0.12);
-    drop-shadow-color: rgba(0, 0, 0, 0.35);
-    drop-shadow-blur: 28px;
-    drop-shadow-offset-y: 10px;
-
-    TouchArea { }
 
     VerticalLayout {
       padding: 20px;
@@ -760,6 +788,7 @@ component AccountListPanel inherits Rectangle {
         name: account.name;
         skin: account.skin;
         avatar: account.avatar;
+        kind: account.kind;
         active: AppState.active-account == account.name;
         activate => {
           Actions.set-active-account(account.name);
@@ -818,6 +847,7 @@ export component AccountView inherits Rectangle {
   function open-skin-dialog(name: string) {
     root.skin-dialog-account = name;
     root.show-skin-dialog = true;
+    Actions.preview-skin(name, Palette.background.red > 128);
   }
 
   function submit-new-account() {
@@ -884,20 +914,49 @@ export component AccountView inherits Rectangle {
         padding: 16px;
         spacing: 8px;
 
-        VerticalLayout {
-          spacing: 2px;
+        HorizontalLayout {
+          spacing: 8px;
+          cross-axis-alignment: start;
 
-          Text {
-            text: root.filter-title();
-            color: Palette.foreground;
-            font-size: 18px;
-            font-weight: 600;
+          VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+
+            Text {
+              text: root.filter-title();
+              color: Palette.foreground;
+              font-size: 18px;
+              font-weight: 600;
+            }
+
+            Text {
+              text: root.filter-subtitle();
+              color: Palette.foreground.with-alpha(0.65);
+              font-size: 13px;
+            }
           }
 
-          Text {
-            text: root.filter-subtitle();
-            color: Palette.foreground.with-alpha(0.65);
-            font-size: 13px;
+          Rectangle {
+            width: 34px;
+            height: 34px;
+            border-radius: 6px;
+            background: plus-touch.has-hover
+              ? Palette.accent-background.with-alpha(0.24)
+              : Palette.accent-background.with-alpha(0.14);
+
+            Image {
+              source: @image-url("../images/icons/plus.svg");
+              width: 16px;
+              height: 16px;
+              colorize: Palette.accent-background;
+            }
+
+            plus-touch := TouchArea {
+              mouse-cursor: pointer;
+              clicked => {
+                root.open-add-dialog();
+              }
+            }
           }
         }
 
@@ -909,31 +968,6 @@ export component AccountView inherits Rectangle {
           vertical-stretch: 1;
           manage-skin(name) => {
             root.open-skin-dialog(name);
-          }
-        }
-      }
-
-      Rectangle {
-        width: 34px;
-        height: 34px;
-        x: parent.width - self.width - 16px;
-        y: 16px;
-        border-radius: 6px;
-        background: plus-touch.has-hover
-          ? Palette.accent-background.with-alpha(0.24)
-          : Palette.accent-background.with-alpha(0.14);
-
-        Image {
-          source: @image-url("../images/icons/plus.svg");
-          width: 16px;
-          height: 16px;
-          colorize: Palette.accent-background;
-        }
-
-        plus-touch := TouchArea {
-          mouse-cursor: pointer;
-          clicked => {
-            root.open-add-dialog();
           }
         }
       }

@@ -306,9 +306,25 @@ pub fn install_instance(
     // 5. 补齐实例常用的游戏目录（版本隔离后，游戏会直接读写这里）
     if !install_options.dry_run {
         create_instance_layout(&paths, &options.instance);
+        write_instance_metadata(&paths, options)?;
     }
 
     Ok(report)
+}
+
+/// 写 `versions/<instance>/neutrino.json`，供实例详情页读取加载器信息。
+fn write_instance_metadata(paths: &GamePaths, options: &InstanceInstallOptions) -> Result<()> {
+    let metadata = serde_json::json!({
+        "game_version": options.version,
+        "loader": options.loader.map(LoaderKind::key).unwrap_or(""),
+        "loader_version": options.loader_version.as_deref().unwrap_or(""),
+    });
+    let path = paths.version_dir(&options.instance).join("neutrino.json");
+    let bytes = serde_json::to_vec_pretty(&metadata).map_err(|source| CoreError::Json {
+        context: "实例元数据".to_string(),
+        source,
+    })?;
+    fs::write(&path, bytes).map_err(|err| io_err(&path, err))
 }
 
 /// 把已解析的版本 JSON 安装到 `versions/<target_id>/`。
@@ -1110,5 +1126,29 @@ mod tests {
 
         assert_eq!(value["id"], "my-vanilla");
         assert!(value.get("inheritsFrom").is_none());
+    }
+
+    #[test]
+    fn writes_instance_loader_metadata() {
+        let dir = std::env::temp_dir().join(format!(
+            "neutrino-instance-meta-test-{}",
+            std::process::id()
+        ));
+        let paths = GamePaths::new(&dir);
+        let instance = "1.21.1-fabric";
+        fs::create_dir_all(paths.version_dir(instance)).unwrap();
+
+        let mut options = InstanceInstallOptions::new(&dir, instance, "1.21.1");
+        options.loader = Some(LoaderKind::Fabric);
+        options.loader_version = Some("0.16.9".to_string());
+        write_instance_metadata(&paths, &options).unwrap();
+
+        let text = fs::read_to_string(paths.version_dir(instance).join("neutrino.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["game_version"], "1.21.1");
+        assert_eq!(value["loader"], "fabric");
+        assert_eq!(value["loader_version"], "0.16.9");
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

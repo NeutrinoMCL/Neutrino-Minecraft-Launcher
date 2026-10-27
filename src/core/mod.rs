@@ -1,5 +1,6 @@
 //! 安装核心的公共入口与常量。
 
+pub mod curseforge;
 pub mod error;
 pub mod hash;
 pub mod install;

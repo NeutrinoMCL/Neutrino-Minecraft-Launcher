@@ -1,5 +1,15 @@
+import { Palette } from "std-widgets.slint";
 import { ThemePreference } from "../models/enums.slint";
 
 export global Theme {
   in-out property <ThemePreference> preference: ThemePreference.system;
+
+  /// 把 `preference` 应用到 Slint 的调色板；system 表示跟随系统。
+  public function apply() {
+    Palette.color-scheme = preference == ThemePreference.system
+      ? ColorScheme.unknown
+      : preference == ThemePreference.dark
+        ? ColorScheme.dark
+        : ColorScheme.light;
+  }
 }

@@ -1,0 +1,11 @@
+export struct WallpaperInfo {
+  /// 图片的绝对路径，用来选中 / 删除
+  path: string,
+  /// 显示名（文件名）
+  name: string,
+  /// 列表缩略图
+  thumbnail: image,
+  has-thumbnail: bool,
+  /// 是否是当前使用的壁纸（随机模式下都为 false）
+  selected: bool
+}

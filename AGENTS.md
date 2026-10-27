@@ -1,80 +1,110 @@
-# Neutrino Minecraft Launcher
+# Neutrino Minecraft Launcher — Agent Notes
 
-Early-stage Slint + Rust desktop app. The UI is a navigable shell with a wallpaper background.
-Version **installation** (vanilla, Fabric, Forge) and offline-account launching are implemented in
-the shared core library; the GUI creates instances from the “实例” (instances) page, while the CLI
-(`neutrino-install`) installs vanilla versions only.
+Rust 2024 + Slint 1.18 Windows desktop Minecraft launcher in a single crate: shared library
+(`src/lib.rs`), GUI binary, and the `neutrino-install` CLI. Read `README.md` for behavior/config
+and `CONTRIBUTING.md` for PR rules; this file records what is easy to get wrong.
 
 ## Commands
 
-- Build/check: `cargo check` (or `cargo build`)
-- Run the app: `cargo run`
-- Run the installer: `cargo run --bin neutrino-install -- --list` / `cargo run --bin neutrino-install -- 1.20.4 --dry-run`
-- Preview just the UI: `slint-viewer ui/app-window.slint`
-- Check one `.slint` file: `slint-viewer --check ui/app-window.slint`
-- Pre-finish checks: `cargo fmt --all -- --check`, then `cargo clippy --all-targets --all-features -- -D warnings`, then `cargo test --all-targets --all-features`
-- CI runs the same three checks on `windows-latest` for pushes to `main` and all PRs (`.github/workflows/ci.yml`).
-  Unit tests are inline `#[cfg(test)]` modules (no `tests/` dir); UI changes still need `cargo run` or `slint-viewer` to verify manually.
+```sh
+cargo run                                   # GUI (blocks while the window is open)
+cargo run --bin neutrino-install -- --list  # CLI installer; see --help
+cargo run --bin neutrino-install -- 1.20.4 --dry-run
 
-## How it is wired
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+cargo test <name>                           # single test; tests use fixtures and need no network
+```
 
-- `src/lib.rs` is the shared library: `core` (installer), `java` (runtime detection), `instances` (`versions/` scan).
-  Both `src/main.rs` (GUI) and `src/bin/neutrino-install.rs` (CLI) depend on it, so core logic must stay UI-free.
-- `core/install.rs` is the only place that mutates the game directory. Everything goes through
-  `.part` file → SHA-1 verify → rename, and already-valid files are skipped, so re-running is idempotent.
-  `install()` writes a vanilla version to `versions/<version>/`; `install_instance()` merges the
-  vanilla JSON with an optional loader profile into a self-contained `versions/<instance>/`
-  (id rewritten, `inheritsFrom` removed), with libraries/assets shared from the game root.
-  It also creates the instance's `mods/`, `resourcepacks/`, `shaderpacks/`, `saves/`, `config/`
-  and `logs/` folders.
-- `core/loader.rs` queries Fabric Meta / Forge Maven for loader versions, downloads Fabric's
-  profile JSON, and runs the official Forge installer (requires a detected Java). Forge is installed
-  into the real game dir so its patching processors can write `libraries/`; the temporary generated
-  version dir is removed after the JSON is read.
-- `core/launch.rs` builds the `java` command from an installed version JSON (classpath, `arguments.jvm` /
-  `arguments.game`, placeholder substitution) and spawns the game. It expects the merged instance
-  JSONs produced by `install_instance` (no `inheritsFrom`); `${library_directory}` is substituted
-  for Forge. Raw versions with `inheritsFrom` are still rejected. The game directory / working
-  directory is `versions/<id>/` (version isolation), while `libraries/` and `assets/` stay shared.
-  Game stdout/stderr is appended to `versions/<id>/logs/launcher.log`.
-- `core/paths.rs` owns the `.minecraft` layout; never hand-join `versions/...` elsewhere.
-- `src/desktop.rs` (`InstallController`) is the only GUI↔core bridge: it owns the version-list cache,
-  the filter, the current discover category, and the background install / download threads. Slint
-  properties may only be written on the UI thread, so background work always goes through
-  `Weak::upgrade_in_event_loop`; progress callbacks therefore capture the controller
-  (`Arc<Mutex<_>>` all the way down) instead of a `Weak` directly. UI callbacks
-  (`on_choose_version`, `on_choose_loader`, `on_choose_loader_version`, `on_go_back`,
-  `on_create_instance`, `on_filter_versions`, `on_open_category`, `on_download_project`, …) run on
-  the UI thread and may touch `AppState` synchronously.
-- The instances page's “添加实例” wizard drives the Mojang version list (`refresh-versions` /
-  `filter-versions` / `choose-version` / `choose-loader` / `choose-loader-version` / `create-instance`);
-  the version list no longer checks local install state. The instance name is validated for Windows
-  illegal characters, reserved names and existing `versions/<name>/` directories. The discover page
-  has four categories `mod` / `shader` / `resourcepack` / `modpack` (Modrinth, via `core/modrinth.rs`).
-  Downloads land in `mods/`, `shaderpacks/`, `resourcepacks/`; modpack one-click install is
-  intentionally not implemented yet. Only one install/download task may run at a time.
-- All `AppState` properties are `in` (Rust-set only). UI-local state (e.g. the discover filter) lives
-  on the view component and resets when the app restarts.
-- `core/net.rs` exposes `Downloader` (`Clone`) and `download_all` (scoped threads). Progress goes through
-  `core/progress.rs`, which throttles callbacks and is safe to share across threads.
-- `build.rs` compiles only `ui/app-window.slint`. New `.slint` files must be imported from it or explicitly added to `build.rs`, otherwise they are never compiled.
-- `src/main.rs` wires the UI; `src/accounts.rs` stores offline accounts (in `%APPDATA%/Neutrino/accounts.json`) and their skins (custom skins copied into `%APPDATA%/Neutrino/skins/`), `src/skins.rs` crops custom skin PNGs into head avatars, `src/java.rs` detects Java installations, `src/instances.rs` scans the Minecraft `versions` folder, and `src/msa.rs` runs the Microsoft device-code login (requires `NEUTRINO_MSA_CLIENT_ID`). `slint::include_modules!()` generates `AppWindow`; `AppState`, `Actions`, `MsaState`, `InstanceInfo`, `ContentFile`, `AccountInfo`, `AccountKind`, `SkinType`, and `JavaInfo` are re-exported from `app-window.slint` so Rust can access them. UI entry chain: `ui/app-window.slint` -> `shell/app-shell.slint` -> `shell/top-bar.slint`; `ui/models/enums.slint` defines `Page`.
-- 实例内容的扫描 / 解压 / 图标解码都在 `main.rs` 的 `InstanceContentLoader` 后台线程里做（先回填名称+大小，再异步补版本/加载器/图标），UI 线程只负责换模型；不要再把这类 IO 放回 `load-instance-content` 回调，否则点实例会整窗卡住。
-- Local Microsoft auth config: copy `.env.example` to `.env` and set `NEUTRINO_MSA_CLIENT_ID`; `.env` is ignored by Git, `.env.example` is tracked.
-- Keep `slint` and `slint-build` on the same version; both are pinned to 1.18.1.
-- `ui/fonts/HarmonyOS_Sans_SC_Regular.ttf` is imported by `app-window.slint` as the default UI font; `ui/images/backgrounds/Jokull.jpg` is the app shell wallpaper.
-- For non-trivial `.slint` work, use the vendored `slint` skill in `.agents/skills/slint/`.
+CI (`.github/workflows/ci.yml`, `windows-latest`) runs exactly fmt → clippy → test. There is no
+`tests/` directory; add `#[cfg(test)]` modules beside the code. After `.slint` edits, use
+`slint-viewer --check ui/app-window.slint` or run the app — compiling is not enough for layout changes.
 
-## Repo gotchas
+## Wiring
 
-- **不要给 `slint` 加回 `accessibility` 特性**（`Cargo.toml` 里用的是 `default-features = false`）。
-  本机 Windows 11 + Slint 1.18.1 + accesskit_windows 0.34 下，窗口创建时
-  `SetPropW` 返回 `ERROR_NOT_ENOUGH_MEMORY`，accesskit 直接 panic，表现为"双击 exe 一闪就退"。
-  去掉该特性后界面正常；要恢复读屏支持，需要先确认上游修好（accesskit_windows > 0.34 或
-  Slint 换版本），不能只改 Cargo 特性。
-- `.delta/` holds ignored worktrees/clones for the delta tool. Ignore it when searching or editing; it contains stale copies of this repo.
-- Git prints `# is not a valid attribute name` because of the inline comment at `.gitattributes:8`; it is harmless.
-- Windows MSVC builds get an 8 MB stack from `.cargo/config.toml`; keep that setting.
-- Existing project convention: use Conventional Commit prefixes (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`).
-- 从 agent/脚本里启动 GUI 做验证时，注意用 `tasklist` 确认进程存活而不是看 shell 是否返回；
-  `(./app.exe &)` 在 shell 退出后进程可能被带走。
+- `src/lib.rs` exposes `core`, `java`, `instances`. The GUI imports `java` / `instances` from the
+  library (`use neutrino_minecraft_launcher::{instances, java};`); do not declare duplicate
+  `mod` entries in `src/main.rs`, or those files compile (and their tests run) twice.
+- `src/desktop.rs` (`InstallController`) is the main GUI↔core bridge for version lists, instance
+  creation, discover, installs, and downloads. Slint properties are UI-thread only: background work
+  must return via `Weak::upgrade_in_event_loop`, and progress callbacks capture the controller
+  (`Arc<Mutex<_>>`), not a bare `Weak`. `main.rs` also calls `core::launch` / `core::paths` directly.
+  Discover search is stored on the controller (`Actions.search-projects`); Modrinth receives `query`,
+  CurseForge `searchFilter`, combined with the existing filters/sort, 50 results per request. Project
+  rows/detail headers show `ProjectInfo.tags` (`project_tags` on the controller: client/server
+  support, API categories, recognized loaders). Project versions are grouped by game version
+  (`ProjectVersionGroup`); loader tags come from `loader_tags` (mod loaders, or Iris/OptiFine/Canvas
+  for shaders). `Actions.open-instance-download` pre-filters the download dialog by the instance's
+  game version/loader; `load_versions` sorts groups by manifest rank and marks a `recommended`
+  entry (UI shows it in `AppState.recommended-version`) when the download target is an instance. The
+  `image` crate must keep the `webp` feature enabled because most Modrinth project icons are WebP.
+- Networking is blocking (`ureq` / `Downloader`) and background jobs are plain `std::thread`s; there
+  is no async runtime. Don't introduce one without discussing it first.
+- Instance content scanning (`InstanceContentLoader` in `src/main.rs`) is deliberately two-phase on a
+  background thread (names first, then archive metadata/icons); do not move that IO back into the
+  `load-instance-content` callback, or selecting an instance freezes the window. `instances.rs`
+  picks icons from metadata (`fabric.mod.json` `icon`, Forge `logoFile`) before falling back to
+  `pack.png`, root `*-icon.png` / `logo.png`, and `assets/<namespace>/icon.*`; PNG/WebP/JPEG/GIF
+  names are accepted. The same loader also
+  publishes instance loader metadata (from `versions/<id>/neutrino.json`, falling back to Fabric/Forge
+  library coordinates). The mods tab shows that loader above the list; `LoaderSwitchDialog` drives
+  `refresh-instance-loader-versions` / `switch-instance-loader`. Switching re-runs `install_instance`
+  for the same instance directory (single-task guarded) and must not touch `mods/`, saves or config.
+- Version-install writes go through `core/install.rs`: `.part` → SHA-1 verify → rename, skipping
+  valid files, so re-runs are idempotent. Reuse that path for new install writes (Forge's external
+  installer is the exception). `install_instance` also writes `versions/<id>/neutrino.json` with the
+  base game version, loader key and loader version; keep that in sync if the install options change.
+  Discover content is downloaded separately by `desktop.rs`.
+  `core/paths.rs` owns the `.minecraft` layout; never hand-join `versions/...`.
+- `core/loader.rs`: Fabric reads Fabric Meta (no Java needed); Forge runs the official installer, so
+  it needs a detected Java, temporarily installs the base version, then cleans it up.
+  `core/launch.rs` accepts only merged self-contained instance JSON (it rejects `inheritsFrom`);
+  `--gameDir`/cwd is `versions/<id>/` while `libraries/` and `assets/` stay shared; game output goes
+  to `versions/<id>/logs/launcher.log`.
+- `build.rs` compiles only `ui/app-window.slint`. New `.slint` files must be imported transitively
+  from it or explicitly added, or they are never compiled. Reusable widgets (message strip, tag,
+  action/refresh buttons, empty hint) live in `ui/components/common.slint` and are imported by
+  views. Rust only sees globals/types exported from `app-window.slint` via
+  `slint::include_modules!()`. `AppState` properties are `in`-only (Rust sets them); keep view-local
+  state on the view component.
+- `slint` and `slint-build` are pinned to 1.18.1 and must stay in sync. The 3D preview needs
+  `unstable-wgpu-30`; keep the `wgpu` crate version and Slint feature aligned. For `.slint` work,
+  use the vendored skill in `.agents/skills/slint/`.
+
+## Runtime and repo gotchas
+
+- `conf.toml` lookup order: `NEUTRINO_CONFIG` → `./conf.toml` (only if it already exists) →
+  `%APPDATA%/Neutrino/conf.toml`; the settings page writes back to that same file. `./conf.toml` is
+  not gitignored. Accounts/tokens live in `%APPDATA%/Neutrino/account.toml` (TOML; legacy
+  `accounts.json` is migrated automatically on first load and removed after a successful write).
+- `.env` (copy `.env.example`; ignored) supplies `NEUTRINO_MSA_CLIENT_ID` for Microsoft login and
+  `CURSEFORGE_API_KEY` / legacy `NEUTRINO_CURSEFORGE_API_KEY`. The CurseForge key is read literally
+  from the `.env` file, bypassing dotenvy's expansion (it would expand `$` inside keys); an external
+  env var wins. Don't replace that reader with plain dotenvy.
+- 3D preview selects a manual wgpu 30 backend at startup; if unavailable the app still runs without
+  preview. `main.rs` intentionally `mem::forget`s the `Device`/`Queue` at shutdown to avoid a wgpu 30
+  Windows panic — don't "fix" the leak without testing shutdown.
+- **Do not re-enable Slint's `accessibility` feature.** `Cargo.toml` uses `default-features = false`;
+  on some Windows 11 + accesskit_windows 0.34 setups window creation panics (`SetPropW` /
+  `ERROR_NOT_ENOUGH_MEMORY`).
+- Keep `.cargo/config.toml`: it raises the MSVC stack to 8 MB.
+- `.delta/` is an ignored local worktree/clone area with stale copies; skip it in searches and edits.
+- Installs and discover downloads each have a single-task guard and no cancellation. Discover
+  downloads go to `default_game_dir()` (`%APPDATA%/.minecraft`) `mods/` / `shaderpacks/` /
+  `resourcepacks/`, unless the instance download dialog set a target via
+  `Actions.set-download-target`; then they go into that instance's folder. Instance downloads are
+  recorded in `<instance>/neutrino-content.json` (source, project/version id), and
+  `Actions.check-content-updates` / `update-content` use that file to offer updates; only tracked
+  files can be updated. Modpack install is browse-only.
+- The verified target is Windows MSVC and CI is Windows-only. When launching the GUI from a script,
+  start it detached and confirm with `tasklist`; a direct `cargo run` blocks and `(./exe &)` may die
+  with the shell.
+
+## Conventions
+
+- rustfmt defaults; Clippy warnings are errors — fix them rather than adding `#[allow]` without
+  justification. `.editorconfig`: UTF-8, LF, final newline, 4-space Rust / 2-space Slint.
+  Identifiers in English; user-facing UI text and docs in Chinese.
+- Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`); `main` is protected and all
+  changes land via PR. Keep unrelated formatting out of feature commits.

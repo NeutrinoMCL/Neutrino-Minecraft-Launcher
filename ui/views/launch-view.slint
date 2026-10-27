@@ -1,10 +1,44 @@
-import { Palette } from "std-widgets.slint";
+import { ListView, Palette } from "std-widgets.slint";
+import { SkinType } from "../models/enums.slint";
+import { Actions } from "../state/actions.slint";
 import { AppState } from "../state/app-state.slint";
+
+// 卡片右上角的切换按钮
+component CardSwitch inherits Rectangle {
+  in property <bool> open: false;
+
+  callback clicked();
+
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: touch.has-hover ? Palette.foreground.with-alpha(0.08) : transparent;
+
+  Image {
+    source: @image-url("../images/icons/arrow-left-right.svg");
+    width: 14px;
+    height: 14px;
+    colorize: root.open ? Palette.accent-background : Palette.foreground.with-alpha(0.55);
+  }
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      root.clicked();
+    }
+  }
+}
 
 component InfoCard inherits Rectangle {
   in property <string> title;
   in property <string> subtitle;
   in property <image> icon;
+  in property <bool> show-icon: true;
+  in property <bool> avatar: false;
+  in property <bool> center-text: false;
+  in property <bool> switch-open: false;
+
+  callback switch-clicked();
 
   width: 196px;
   height: 88px;
@@ -17,17 +51,28 @@ component InfoCard inherits Rectangle {
   drop-shadow-offset-y: 6px;
 
   HorizontalLayout {
-    padding: 14px;
+    padding-left: root.center-text ? 34px : 14px;
+    padding-right: 34px;
+    padding-top: 14px;
+    padding-bottom: 14px;
     spacing: 12px;
     cross-axis-alignment: center;
 
-    Rectangle {
+    if root.show-icon : Rectangle {
       width: 36px;
       height: 36px;
       border-radius: 6px;
+      clip: true;
       background: Palette.accent-background.with-alpha(0.14);
 
-      Image {
+      if root.avatar : Image {
+        source: root.icon;
+        width: 100%;
+        height: 100%;
+        image-fit: cover;
+      }
+
+      if !root.avatar : Image {
         source: root.icon;
         width: 20px;
         height: 20px;
@@ -36,27 +81,273 @@ component InfoCard inherits Rectangle {
     }
 
     VerticalLayout {
+      horizontal-stretch: 1;
       alignment: center;
       spacing: 3px;
 
       Text {
         text: root.title;
-        color: Palette.foreground.with-alpha(0.62);
-        font-size: 12px;
+        color: Palette.foreground;
+        font-size: 15px;
+        font-weight: 600;
+        width: 100%;
+        horizontal-alignment: root.center-text ? center : left;
+        overflow: elide;
       }
 
       Text {
         text: root.subtitle;
-        color: Palette.foreground;
-        font-size: 15px;
-        font-weight: 600;
+        color: Palette.foreground.with-alpha(0.62);
+        font-size: 12px;
+        width: 100%;
+        horizontal-alignment: root.center-text ? center : left;
+        overflow: elide;
       }
     }
+  }
+
+  CardSwitch {
+    x: parent.width - 32px;
+    y: 6px;
+    open: root.switch-open;
+    clicked => {
+      root.switch-clicked();
+    }
+  }
+}
+
+component AccountRow inherits Rectangle {
+  in property <string> name;
+  in property <SkinType> skin;
+  in property <image> avatar;
+  in property <bool> active;
+
+  callback choose();
+
+  height: 46px;
+  border-radius: 6px;
+  background: root.active
+    ? Palette.accent-background.with-alpha(0.12)
+    : touch.has-hover
+      ? Palette.foreground.with-alpha(0.05)
+      : transparent;
+
+  HorizontalLayout {
+    padding-left: 8px;
+    padding-right: 8px;
+    spacing: 10px;
+    cross-axis-alignment: center;
+
+    Rectangle {
+      width: 30px;
+      height: 30px;
+      border-radius: 5px;
+      clip: true;
+      background: Palette.accent-background.with-alpha(0.14);
+
+      Image {
+        source: root.skin == SkinType.steve
+          ? @image-url("../images/faces/steve.png")
+          : root.skin == SkinType.alex
+            ? @image-url("../images/faces/alex.png")
+            : root.avatar;
+        width: 100%;
+        height: 100%;
+      }
+    }
+
+    Text {
+      text: root.name;
+      color: Palette.foreground;
+      font-size: 13px;
+      font-weight: root.active ? 600 : 400;
+      horizontal-stretch: 1;
+      vertical-alignment: center;
+      overflow: elide;
+    }
+
+    if root.active : Text {
+      text: "使用中";
+      color: Palette.accent-background;
+      font-size: 11px;
+      font-weight: 600;
+      vertical-alignment: center;
+    }
+  }
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      root.choose();
+    }
+  }
+}
+
+component InstanceRow inherits Rectangle {
+  in property <string> name;
+  in property <bool> selected;
+
+  callback choose();
+
+  height: 46px;
+  border-radius: 6px;
+  background: root.selected
+    ? Palette.accent-background.with-alpha(0.12)
+    : touch.has-hover
+      ? Palette.foreground.with-alpha(0.05)
+      : transparent;
+
+  HorizontalLayout {
+    padding-left: 8px;
+    padding-right: 8px;
+    spacing: 10px;
+    cross-axis-alignment: center;
+
+    Rectangle {
+      width: 30px;
+      height: 30px;
+      border-radius: 5px;
+      background: Palette.accent-background.with-alpha(0.14);
+
+      Image {
+        source: @image-url("../images/icons/instance.svg");
+        width: 17px;
+        height: 17px;
+        colorize: Palette.accent-background;
+      }
+    }
+
+    Text {
+      text: root.name;
+      color: Palette.foreground;
+      font-size: 13px;
+      font-weight: root.selected ? 600 : 400;
+      horizontal-stretch: 1;
+      vertical-alignment: center;
+      overflow: elide;
+    }
+
+    if root.selected : Text {
+      text: "当前";
+      color: Palette.accent-background;
+      font-size: 11px;
+      font-weight: 600;
+      vertical-alignment: center;
+    }
+  }
+
+  touch := TouchArea {
+    mouse-cursor: pointer;
+    clicked => {
+      root.choose();
+    }
+  }
+}
+
+// 角色 / 实例共用的弹出卡片
+component PickerCard inherits Rectangle {
+  in property <string> title;
+
+  callback close();
+
+  width: 404px;
+  height: 280px;
+  border-radius: 8px;
+  background: Palette.background.with-alpha(0.98);
+  border-width: 1px;
+  border-color: Palette.foreground.with-alpha(0.12);
+  drop-shadow-color: rgba(0, 0, 0, 0.25);
+  drop-shadow-blur: 20px;
+  drop-shadow-offset-y: 8px;
+
+  VerticalLayout {
+    padding: 12px;
+    spacing: 8px;
+
+    HorizontalLayout {
+      spacing: 8px;
+      cross-axis-alignment: center;
+
+      Text {
+        text: root.title;
+        color: Palette.foreground;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-stretch: 1;
+        vertical-alignment: center;
+      }
+
+      Rectangle {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+        background: close-touch.has-hover ? Palette.foreground.with-alpha(0.08) : transparent;
+
+        Text {
+          text: "×";
+          color: Palette.foreground.with-alpha(0.6);
+          font-size: 15px;
+          horizontal-alignment: center;
+          vertical-alignment: center;
+        }
+
+        close-touch := TouchArea {
+          mouse-cursor: pointer;
+          clicked => {
+            root.close();
+          }
+        }
+      }
+    }
+
+    @children
   }
 }
 
 export component LaunchView inherits Rectangle {
   background: transparent;
+
+  in-out property <bool> show-account-picker: false;
+  in-out property <bool> show-instance-picker: false;
+  in-out property <string> selected-instance: "";
+
+  function toggle-account-picker() {
+    root.show-account-picker = !root.show-account-picker;
+    root.show-instance-picker = false;
+  }
+
+  function toggle-instance-picker() {
+    root.show-instance-picker = !root.show-instance-picker;
+    root.show-account-picker = false;
+  }
+
+  function instance-subtitle() -> string {
+    return root.selected-instance == "" ? "未选择实例" : root.selected-instance;
+  }
+
+  // 离开启动页时收起切换卡片，避免下次回来还留着。
+  changed visible => {
+    if (!self.visible) {
+      root.show-account-picker = false;
+      root.show-instance-picker = false;
+    }
+  }
+
+  // 点击卡片外的区域收起
+  if root.show-account-picker || root.show-instance-picker : Rectangle {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+
+    dismiss-touch := TouchArea {
+      clicked => {
+        root.show-account-picker = false;
+        root.show-instance-picker = false;
+      }
+    }
+  }
 
   VerticalLayout {
     padding: 24px;
@@ -66,22 +357,117 @@ export component LaunchView inherits Rectangle {
       vertical-stretch: 1;
     }
 
+    // 角色切换卡片：出现在底部两张卡片正上方
+    if root.show-account-picker : HorizontalLayout {
+      alignment: end;
+
+      PickerCard {
+        title: "切换角色";
+        close => {
+          root.show-account-picker = false;
+        }
+
+        if AppState.accounts.length == 0 : Rectangle {
+          vertical-stretch: 1;
+
+          Text {
+            text: "还没有角色，请先到账户页添加";
+            color: Palette.foreground.with-alpha(0.5);
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+          }
+        }
+
+        if AppState.accounts.length > 0 : ListView {
+          vertical-stretch: 1;
+
+          for account in AppState.accounts : AccountRow {
+            name: account.name;
+            skin: account.skin;
+            avatar: account.avatar;
+            active: account.name == AppState.active-account;
+
+            choose => {
+              Actions.set-active-account(account.name);
+              root.show-account-picker = false;
+            }
+          }
+        }
+      }
+    }
+
+    // 实例切换卡片：和角色卡片同一位置，互斥显示
+    if root.show-instance-picker : HorizontalLayout {
+      alignment: end;
+
+      PickerCard {
+        title: "切换实例";
+        close => {
+          root.show-instance-picker = false;
+        }
+
+        if AppState.instances.length == 0 : Rectangle {
+          vertical-stretch: 1;
+
+          Text {
+            text: "还没有实例，请先到实例页创建";
+            color: Palette.foreground.with-alpha(0.5);
+            font-size: 12px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+          }
+        }
+
+        if AppState.instances.length > 0 : ListView {
+          vertical-stretch: 1;
+
+          for instance in AppState.instances : InstanceRow {
+            name: instance.name;
+            selected: instance.name == root.selected-instance;
+
+            choose => {
+              root.selected-instance = instance.name;
+              root.show-instance-picker = false;
+            }
+          }
+        }
+      }
+    }
+
     HorizontalLayout {
       alignment: end;
       spacing: 12px;
 
       InfoCard {
-        title: "角色";
-        subtitle: AppState.active-account == ""
+        title: AppState.active-account == ""
           ? "未选择角色"
           : AppState.active-account;
-        icon: @image-url("../images/icons/account.svg");
+        subtitle: AppState.active-account == ""
+          ? "点击右侧切换"
+          : AppState.active-account-kind;
+        icon: AppState.active-account == ""
+          ? @image-url("../images/icons/account.svg")
+          : AppState.active-account-avatar;
+        avatar: AppState.active-account != "";
+        switch-open: root.show-account-picker;
+
+        switch-clicked => {
+          root.toggle-account-picker();
+        }
       }
 
       InfoCard {
-        title: "实例";
-        subtitle: "未选择实例";
+        title: "启动游戏";
+        subtitle: root.instance-subtitle();
         icon: @image-url("../images/icons/instance.svg");
+        show-icon: false;
+        center-text: true;
+        switch-open: root.show-instance-picker;
+
+        switch-clicked => {
+          root.toggle-instance-picker();
+        }
       }
     }
   }

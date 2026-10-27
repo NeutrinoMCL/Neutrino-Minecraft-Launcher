@@ -138,7 +138,7 @@ CI（`.github/workflows/ci.yml`）会在 `windows-latest` 上对 `main` 的推�
 - 使用 `rustfmt` 默认配置；提交代码前务必运行 `cargo fmt --all`。
 - Clippy 警告视为错误，不要用 `#[allow(...)]` 掩盖问题，除非有充分理由并在代码里说明。
 - `.editorconfig` 约定：UTF-8、LF 换行、文件末尾保留换行、去除行尾空白；
-  Rust 与 Slint 文件使用 4 空格缩进，其余文件 2 空格。
+  Rust 使用 4 空格缩进，Slint 及其他文件使用 2 空格。
 - 标识符、类型、模块名使用英文；面向用户的文档和界面文案使用中文。
 - 新增逻辑尽量附带内联 `#[cfg(test)]` 单元测试（项目没有 `tests/` 目录）。
 - 改动 UI 时请保持现有组件拆分方式，不要在 `app-window.slint` 里堆叠大段视图代码。
@@ -183,6 +183,8 @@ CI（`.github/workflows/ci.yml`）会在 `windows-latest` 上对 `main` 的推�
 ├── src/image_util.rs            # 图像加载与转换工具
 ├── src/java.rs                  # Java 运行时检测
 ├── src/instances.rs             # versions 目录实例扫描与模组 / 资源包 / 光影扫描
+├── src/preview3d.rs             # wgpu 3D 预览（皮肤 / 原理图），纹理导入 Slint
+├── src/preview3d.wgsl           # 预览用着色器
 ├── src/msa.rs                   # Microsoft 设备码登录
 ├── ui/app-window.slint          # 主窗口入口
 ├── ui/shell/                    # AppShell / TopBar / NavItem
