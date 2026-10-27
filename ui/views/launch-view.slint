@@ -1,4 +1,5 @@
 import { ListView, Palette } from "std-widgets.slint";
+import { ActionButton, ModalCard } from "../components/common.slint";
 import { SkinType } from "../models/enums.slint";
 import { Actions } from "../state/actions.slint";
 import { AppState } from "../state/app-state.slint";
@@ -37,15 +38,21 @@ component InfoCard inherits Rectangle {
   in property <bool> avatar: false;
   in property <bool> center-text: false;
   in property <bool> switch-open: false;
+  in property <bool> clickable: false;
 
   callback switch-clicked();
+  callback clicked();
 
   width: 196px;
   height: 88px;
   border-radius: 6px;
-  background: Palette.background.with-alpha(0.94);
+  background: root.clickable && card-touch.has-hover
+    ? Palette.background
+    : Palette.background.with-alpha(0.94);
   border-width: 1px;
-  border-color: Palette.foreground.with-alpha(0.08);
+  border-color: root.clickable && card-touch.has-hover
+    ? Palette.accent-background.with-alpha(0.45)
+    : Palette.foreground.with-alpha(0.08);
   drop-shadow-color: rgba(0, 0, 0, 0.18);
   drop-shadow-blur: 16px;
   drop-shadow-offset-y: 6px;
@@ -103,6 +110,18 @@ component InfoCard inherits Rectangle {
         horizontal-alignment: root.center-text ? center : left;
         overflow: elide;
       }
+    }
+  }
+
+  card-touch := TouchArea {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+    enabled: root.clickable;
+    mouse-cursor: root.clickable ? pointer : default;
+    clicked => {
+      root.clicked();
     }
   }
 
@@ -310,6 +329,11 @@ export component LaunchView inherits Rectangle {
   in-out property <bool> show-account-picker: false;
   in-out property <bool> show-instance-picker: false;
   in-out property <string> selected-instance: "";
+  in-out property <bool> show-launch-dialog: false;
+  /// 用于在启动结果清空（游戏退出）时自动关闭弹窗。
+  property <string> launch-text: AppState.launch-message;
+  /// 用于在实例列表加载完成后自动选中第一个实例。
+  property <int> instance-count: AppState.instances.length;
 
   function toggle-account-picker() {
     root.show-account-picker = !root.show-account-picker;
@@ -325,11 +349,32 @@ export component LaunchView inherits Rectangle {
     return root.selected-instance == "" ? "未选择实例" : root.selected-instance;
   }
 
+  function select-first-instance() {
+    if (root.selected-instance == "" && AppState.instances.length > 0) {
+      root.selected-instance = AppState.instances[0].name;
+    }
+  }
+
+  init => {
+    root.select-first-instance();
+  }
+
+  changed instance-count => {
+    root.select-first-instance();
+  }
+
+  changed launch-text => {
+    if (root.launch-text == "") {
+      root.show-launch-dialog = false;
+    }
+  }
+
   // 离开启动页时收起切换卡片，避免下次回来还留着。
   changed visible => {
     if (!self.visible) {
       root.show-account-picker = false;
       root.show-instance-picker = false;
+      root.show-launch-dialog = false;
     }
   }
 
@@ -464,9 +509,78 @@ export component LaunchView inherits Rectangle {
         show-icon: false;
         center-text: true;
         switch-open: root.show-instance-picker;
+        clickable: true;
 
         switch-clicked => {
           root.toggle-instance-picker();
+        }
+
+        clicked => {
+          root.show-account-picker = false;
+          if (root.selected-instance == "") {
+            root.show-instance-picker = true;
+          } else {
+            root.show-instance-picker = false;
+            root.show-launch-dialog = true;
+            Actions.launch-instance(root.selected-instance);
+          }
+        }
+      }
+    }
+  }
+
+  // 启动结果用弹窗展示；游戏运行期间可以关闭，避免蓝色提示条一直占位。
+  if root.show-launch-dialog : ModalCard {
+    x: 0;
+    y: 0;
+    width: 100%;
+    height: 100%;
+    card-width: 420px;
+    card-height: 220px;
+
+    close => {
+      root.show-launch-dialog = false;
+    }
+
+    VerticalLayout {
+      padding: 20px;
+      spacing: 10px;
+
+      Text {
+        text: AppState.launch-message == ""
+          ? "正在启动…"
+          : AppState.launch-ok
+            ? "启动成功"
+            : "启动失败";
+        color: Palette.foreground;
+        font-size: 18px;
+        font-weight: 600;
+      }
+
+      Text {
+        text: AppState.launch-message == ""
+          ? "正在准备启动游戏…"
+          : AppState.launch-message;
+        color: AppState.launch-message == "" || AppState.launch-ok
+          ? Palette.foreground.with-alpha(0.7)
+          : #e5484d;
+        font-size: 13px;
+        wrap: word-wrap;
+      }
+
+      Rectangle {
+        vertical-stretch: 1;
+      }
+
+      HorizontalLayout {
+        alignment: end;
+
+        ActionButton {
+          label: "关闭";
+          primary: true;
+          clicked => {
+            root.show-launch-dialog = false;
+          }
         }
       }
     }
